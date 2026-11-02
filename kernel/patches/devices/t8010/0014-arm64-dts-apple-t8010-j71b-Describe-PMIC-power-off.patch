@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stuart Fraser <me@stuartfraser.ca>
+Date: Sat, 31 Oct 2026 20:49:52 -0300
+Subject: [PATCH] arm64: dts: apple: t8010-j71b: Describe PMIC power-off
+
+Connect the Angel PMIC power-off driver to the J71b Lightning power supply. Enable this path only on J71b; other boards retain their existing shutdown behavior.
+
+Signed-off-by: Stuart Fraser <me@stuartfraser.ca>
+---
+ arch/arm64/boot/dts/apple/t8010-j71b.dts | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+index 63e8573..edb9f51 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+@@ -83,3 +83,10 @@
+ &nco {
+ 	status = "okay";
+ };
++
++&d2365_pmic {
++	poweroff {
++		compatible = "apple,d2365-poweroff";
++		power-supplies = <&tristar_charger>;
++	};
++};
+-- 
+2.52.0
+
