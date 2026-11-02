@@ -37,6 +37,8 @@ entry. The iPad 6 gets speakers and an accelerometer for screen rotation.
 
 ### Hardware
 
+- Add experimental PMIC power-off handling for iPad (6th generation, Wi-Fi;
+  iPad7,5 / J71b).
 - iPad 6 (J71b): speakers through the MCA audio path, with an ALSA UCM
   profile. (Dalton Alexandre)
 - iPad 5: UCM profile for the speakers and internal microphone.
