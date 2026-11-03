@@ -23,12 +23,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: e1edc8f07f18629f426d9cad9509e5d46999d9c0
+          ref: b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
           path: linux-draft
           persist-credentials: false
       - name: Verify exact experimental source
         run: |
-          test "$(git -C linux-draft rev-parse HEAD)" = e1edc8f07f18629f426d9cad9509e5d46999d9c0
+          test "$(git -C linux-draft rev-parse HEAD)" = b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
           test -z "$(git -C linux-draft status --porcelain)"
           mkdir -p out
           git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
@@ -133,3 +133,30 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
+
+  kunit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y gcc make flex bison bc libelf-dev libssl-dev python3
+      - name: Run audio property KUnit tests in UML
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
+          printf '%s\n' CONFIG_KUNIT=y CONFIG_COMPILE_TEST=y CONFIG_EXPERT=y CONFIG_NO_IOMEM=n CONFIG_SOUND=y CONFIG_SND=y CONFIG_SND_SOC=y CONFIG_APPLE_AOP_AUDIO_KUNIT_TEST=y CONFIG_SND_SOC_APPLE_T8010_PDM_KUNIT_TEST=y > /tmp/j71b-kunit.config
+          python3 tools/testing/kunit/kunit.py run --kunitconfig=/tmp/j71b-kunit.config --build_dir=/tmp/j71b-kunit --jobs=2 --timeout=120 2>&1 | tee /tmp/j71b-kunit.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: j71b-capture-reply-kunit
+          path: |
+            /tmp/j71b-kunit.log
+            /tmp/j71b-kunit/.config
+          include-hidden-files: true
+          retention-days: 7
