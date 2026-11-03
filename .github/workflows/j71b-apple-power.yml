@@ -45,17 +45,23 @@ jobs:
           make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 olddefconfig
           grep -qx 'CONFIG_POWER_RESET_APPLE_D2365_REFERENCE=y' "$build/.config"
           make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" prepare modules_prepare
-          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" drivers/power/reset/apple-d2365-reference.o
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" drivers/power/reset/
           cp "$build/.config" out/kernel.config
           cp "$build"/drivers/power/reset/apple-d2365-reference*.o out/
-          llvm-nm-19 out/apple-d2365-reference.o > out/symbols.txt
+          llvm-ar-19 t "$build/drivers/power/reset/built-in.a" > out/archive-members.txt
+          grep -q 'apple-d2365-reference-core.o$' out/archive-members.txt
+          grep -q 'apple-d2365-reference-adapter.o$' out/archive-members.txt
+          # Built-in composites are flattened in this kernel's archive.
+          # Partial link checks only internal references, not full vmlinux.
+          ld.lld-19 -r -o out/apple-d2365-reference-check.o out/apple-d2365-reference-core.o out/apple-d2365-reference-adapter.o
+          llvm-nm-19 out/apple-d2365-reference-check.o > out/symbols.txt
           ! grep -E ' U d2365_reference_(shutdown|restart)$' out/symbols.txt
           grep -E ' T devm_d2365_reference_register$' out/symbols.txt
-          llvm-readelf-19 -h out/apple-d2365-reference.o | tee out/elf-header.txt
+          llvm-readelf-19 -h out/apple-d2365-reference-check.o | tee out/elf-header.txt
           grep -q 'Machine:.*AArch64' out/elf-header.txt
           dpkg-query -W > out/toolchain-packages.lock
           test -z "$(git -C linux-draft status --porcelain)"
-          (cd out && sha256sum *.o default.config kernel.config linux-source-commit.txt symbols.txt elf-header.txt > SHA256SUMS)
+          (cd out && sha256sum *.o default.config kernel.config linux-source-commit.txt symbols.txt elf-header.txt archive-members.txt > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: j71b-apple-power-compile-${{ matrix.pages }}
@@ -65,6 +71,7 @@ jobs:
             out/default.config
             out/symbols.txt
             out/elf-header.txt
+            out/archive-members.txt
             out/linux-source-commit.txt
             out/toolchain-packages.lock
             out/SHA256SUMS
