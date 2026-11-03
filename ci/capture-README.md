@@ -2,7 +2,7 @@
 
 Only for iPad 6 Wi-Fi, iPad7,5 / J71b / A1893 / T8010.
 
-This uses Linux c40e165367f58182881c461cdbabdc0d1ff57e18. It is an experimental microphone test, not a desktop installation or an upstream-ready driver. The existing speaker path is unchanged; do not start playback. Nothing records or plays automatically.
+This uses Linux e1edc8f07f18629f426d9cad9509e5d46999d9c0. It is an experimental microphone test, not a desktop installation or an upstream-ready driver. The existing speaker path is unchanged; do not start playback. Nothing records or plays automatically.
 
 The experiment assumes Linux is the only host high-power PDM requester. Firmware-wide exclusivity is not proven. A firmware or DMA ownership failure can permanently block capture close, suspend or shutdown until a physical reset. A timeout cannot guarantee killing a task blocked in the kernel. Do not retry capture, unload drivers or unbind devices after a hang.
 
@@ -12,12 +12,14 @@ Apple firmware and factory calibration are not distributed. Orchard adds firmwar
 
 ## Prepare on the Mac
 
-First extract the downloaded GitHub artifact ZIP. It contains the runtime `j71b-capture-experiment-nov3.tar.gz` plus separate source archives. In Finder, create `j71b-capture-experiment-nov3` in Downloads and extract that named runtime tar.gz into the folder, so it contains `orchard/`. Do not use one of the source archives. In Mac Terminal, run:
+First extract the downloaded GitHub artifact ZIP. It contains the runtime `j71b-capture-experiment-nov3-r2.tar.gz` plus separate source archives. In Finder, create `j71b-capture-experiment-nov3-r2` in Downloads and extract that named runtime tar.gz into the folder, so it contains `orchard/`. Do not use one of the source archives. In Mac Terminal, run:
 
 ```sh
-cd "$HOME/Downloads/j71b-capture-experiment-nov3/orchard"
+cd "$HOME/Downloads/j71b-capture-experiment-nov3-r2/orchard"
 ./bin/orchard python ci/prepare-capture-ram.py
 ```
+
+The initramfs compression step prints no progress until complete. It took about 34 seconds in CI; Mac timing varies. Do not start a second preparation concurrently.
 
 This verifies bundle checksums and repacks precompiled components with the standard assembler. It does not compile a kernel, use Podman or access the iPad. It records the extraction path and includes the Mac's Orchard RAM SSH public key; private keys stay on the host. Existing uv, libusb and palera1n prerequisites are required. The launcher may prepare its local Python environment through uv. Use this checkout's launcher, not the global orchard command.
 
@@ -63,7 +65,7 @@ Speak briefly or tap near each microphone during the recording. Do not play the 
 After a normal completion, inspect `ls -l /run/j71b-mic.wav`, `/proc/asound/card*/pcm*c/sub*/status` and `dmesg`. In a separate Mac terminal, retrieve the recording and kernel log before restarting:
 
 ```sh
-cd "$HOME/Downloads/j71b-capture-experiment-nov3/orchard"
+cd "$HOME/Downloads/j71b-capture-experiment-nov3-r2/orchard"
 ./bin/orchard pull /run/j71b-mic.wav "$HOME/Downloads/j71b-mic.wav"
 ./bin/orchard exec -- dmesg > "$HOME/Downloads/j71b-capture-dmesg.txt"
 ```

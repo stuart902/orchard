@@ -20,7 +20,7 @@ def main():
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError(f'Checksum mismatch: {name}')
     provenance = json.loads((ROOT / 'capture-test-provenance.json').read_text())
-    if provenance['kernel_commit'] != 'c40e165367f58182881c461cdbabdc0d1ff57e18':
+    if provenance['kernel_commit'] != 'e1edc8f07f18629f426d9cad9509e5d46999d9c0':
         raise ValueError('Unexpected kernel revision')
     payload = ROOT / 'examples/hardware-check'
     components = ROOT / 'capture-components'

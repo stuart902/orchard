@@ -22,7 +22,7 @@ jobs:
         run: |
           df -h .
           # Both source builds differ from this Orchard base only in CI wiring.
-          for source in 498d90a683750b0826fad69be3d36626c3a0eb34 a63fd7f884a1af7cf25467768cc80dafc06f0713; do
+          for source in 498d90a683750b0826fad69be3d36626c3a0eb34 a63fd7f884a1af7cf25467768cc80dafc06f0713 6d0e564a53f7596269488a740e9473922904658e; do
             git -c safe.directory="$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 "$source" -- src boot kernel devices examples
           done
           git -c safe.directory="$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 HEAD -- src boot kernel devices examples
@@ -36,7 +36,7 @@ jobs:
           root = pathlib.Path('out/inputs')
           root.mkdir(parents=True)
           inputs = [
-            ('kernel', 41655987152, 'a63fd7f884a1af7cf25467768cc80dafc06f0713', 13240379682, '467929c1afd658065fe6685ba3622435a90cb2eaeb70c17ffd3b3685aeff46ac'),
+            ('kernel', 41666049880, '6d0e564a53f7596269488a740e9473922904658e', 13246509353, '704b5814698f6625c8d0d42b452d5bf4026e3ffb43a22d004603ba1b0d4b4fc7'),
             ('userspace', 41655987152, 'a63fd7f884a1af7cf25467768cc80dafc06f0713', 13239672216, '3b4f78584c796ffa27b598a8b3a2bf0fa5f75a3d222ad37ce9c0339ef104feeb'),
             ('tools', 41579299652, '498d90a683750b0826fad69be3d36626c3a0eb34', 13205248045, '8311a66ac814843dc9af2df9b723bb6c474ed67b9bfc4fa909cedbdb33b4cfb8'),
             ('pongo', 41579299652, '498d90a683750b0826fad69be3d36626c3a0eb34', 13205093610, '0e098bcd257f92be88a4b8e93801f67016c6b8f963b0a670510111409ddd9120'),
@@ -67,7 +67,7 @@ jobs:
                   assert all(not p.startswith('/') and '..' not in pathlib.PurePosixPath(p).parts for p in z.namelist())
                   z.extractall(root / name)
               target.unlink()
-          provenance = dict(kernel_commit='c40e165367f58182881c461cdbabdc0d1ff57e18',
+          provenance = dict(kernel_commit='e1edc8f07f18629f426d9cad9509e5d46999d9c0',
               orchard_base='6b5fca68c56868651113ede0063a3061d0b22914',
               packaging_commit=os.environ['GITHUB_SHA'], platform='apple-16k', board='j71b',
               scope='Experimental J71b capture; Linux host HP ownership assumed; no automatic capture or playback',
@@ -76,7 +76,7 @@ jobs:
           PY
           (cd out/inputs/kernel && sha256sum -c SHA256SUMS)
           (cd out/inputs/userspace && sha256sum -c SHA256SUMS)
-          test "$(cat out/inputs/kernel/linux-source-commit.txt)" = c40e165367f58182881c461cdbabdc0d1ff57e18
+          test "$(cat out/inputs/kernel/linux-source-commit.txt)" = e1edc8f07f18629f426d9cad9509e5d46999d9c0
       - name: Fetch corresponding sources for reused recovery tools
         shell: bash
         run: |
@@ -112,7 +112,7 @@ jobs:
           # Verify a fresh location works without compiling or device access.
           mv out/runtime out/relocated
           python3 out/relocated/orchard/ci/prepare-capture-ram.py
-          tar -C out/relocated -czf out/publication/j71b-capture-experiment-nov3.tar.gz .
+          tar -C out/relocated -czf out/publication/j71b-capture-experiment-nov3-r2.tar.gz .
           cp out/inputs/kernel/kernel-source-apple-16k.tar.gz out/publication/
           cp out/inputs/pongo/pongo-source.tar.gz out/publication/
           cp out/inputs/userspace/capture-userspace-source.tar.gz out/recovery-tool-source.tar.gz out/publication/
@@ -122,7 +122,7 @@ jobs:
           printf '%s\n' 'Experimental J71b capture image; precompiled kernel reused.' 'No automatic recording or playback. Host HP ownership is an assumption. No hardware test performed.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: j71b-capture-experiment-nov3
+          name: j71b-capture-experiment-nov3-r2
           path: out/publication/*
           compression-level: 0
           if-no-files-found: error
