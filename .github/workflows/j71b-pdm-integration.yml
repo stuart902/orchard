@@ -24,12 +24,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: 3a4e5af63af8eae3a0b4aa18c05a1a8bad579d57
+          ref: 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
           path: linux-draft
           persist-credentials: false
       - name: Verify exact source
         run: |
-          test "$(git -C linux-draft rev-parse HEAD)" = 3a4e5af63af8eae3a0b4aa18c05a1a8bad579d57
+          test "$(git -C linux-draft rev-parse HEAD)" = 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
           test -z "$(git -C linux-draft status --porcelain)"
           mkdir -p out
           git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
@@ -70,13 +70,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: 3a4e5af63af8eae3a0b4aa18c05a1a8bad579d57
+          ref: 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y gcc make flex bison bc libelf-dev libssl-dev python3
       - name: Run audio property KUnit tests in UML
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = 3a4e5af63af8eae3a0b4aa18c05a1a8bad579d57
+          test "$(git rev-parse HEAD)" = 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
           printf '%s\n' CONFIG_KUNIT=y CONFIG_COMPILE_TEST=y CONFIG_EXPERT=y CONFIG_NO_IOMEM=n CONFIG_SOUND=y CONFIG_SND=y CONFIG_SND_SOC=y CONFIG_APPLE_AOP_AUDIO_KUNIT_TEST=y CONFIG_SND_SOC_APPLE_T8010_PDM_KUNIT_TEST=y > /tmp/j71b-kunit.config
           python3 tools/testing/kunit/kunit.py run --kunitconfig=/tmp/j71b-kunit.config --build_dir=/tmp/j71b-kunit --jobs=2 --timeout=120 2>&1 | tee /tmp/j71b-kunit.log
           test -z "$(git status --porcelain)"
@@ -96,7 +96,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: 3a4e5af63af8eae3a0b4aa18c05a1a8bad579d57
+          ref: 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
           persist-credentials: false
       - name: Install schema tooling
         run: |
@@ -112,3 +112,21 @@ jobs:
           name: j71b-pdm-integration-schema-toolchain
           path: /tmp/aop-schema-packages.lock
           retention-days: 7
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
+          path: linux-draft
+          persist-credentials: false
+      - name: Run extracted PDM teardown ordering tests
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = 58a2e66da75f29badf6523b2c9be3eb7dd27ab53
+          python3 ci/test-pdm-power-order.py linux-draft/sound/soc/apple/t8010-pdm.c
+          test -z "$(git -C linux-draft status --porcelain)"
