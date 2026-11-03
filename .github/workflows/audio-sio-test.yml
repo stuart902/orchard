@@ -1,0 +1,60 @@
+name: Temporary audio SIO kernel build
+on:
+  push:
+    branches: [ci/audio-sio-4d80a6b-test]
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out exact Linux draft
+        uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 4d80a6b183d51565d442f745ea5e95160107e032
+          path: linux-draft
+          persist-credentials: false
+      - name: Verify source identity
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = 4d80a6b183d51565d442f745ea5e95160107e032
+          test -z "$(git -C linux-draft status --porcelain)"
+          mkdir -p out
+          git -C linux-draft rev-parse HEAD | tee out/linux-source-commit.txt
+      - name: Install kernel toolchain
+        run: bash kernel/install-toolchain
+      - name: Build apple-16k kernel, modules and device trees
+        run: |
+          bash kernel/build apple-16k --kernel-tree "$PWD/linux-draft" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          dpkg-query -W > out/kernel-toolchain-packages.lock
+          test "$(git -C linux-draft rev-parse HEAD)" = "$(cat out/linux-source-commit.txt)"
+          test -z "$(git -C linux-draft status --porcelain)"
+      - name: Archive build and provenance
+        run: |
+          tar -C out -czf out/kernel-components-apple-16k.tar.gz components
+          tar -C linux-draft --exclude=.git --exclude=.orchard-out -czf out/kernel-source-apple-16k.tar.gz .
+          (cd out && sha256sum kernel-components-apple-16k.tar.gz kernel-source-apple-16k.tar.gz linux-source-commit.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-sio-4d80a6b-apple-16k
+          path: |
+            out/kernel-components-apple-16k.tar.gz
+            out/kernel-source-apple-16k.tar.gz
+            out/linux-source-commit.txt
+            out/kernel-toolchain-packages.lock
+            out/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
