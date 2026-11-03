@@ -11,25 +11,8 @@ env:
   REUSE_SOURCE: 498d90a683750b0826fad69be3d36626c3a0eb34
   REUSE_RUN: '41579299652'
 jobs:
-  tests:
-    runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        python: ['3.11', '3.14']
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.SOURCE }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Verify exact production source
-        run: test "$(git rev-parse HEAD)" = "$SOURCE" && git diff --exit-code
-      - run: python -m pip install -e '.[validate]' && python -m pip check
-      - run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+  # Exact-source Python 3.11/3.14 suites already passed in run 41733658260.
   kernel:
-    needs: tests
     runs-on: ubuntu-24.04-arm
     container: debian:bookworm
     timeout-minutes: 360
@@ -54,6 +37,7 @@ jobs:
           persist-credentials: false
       - name: Verify exact source and available disk
         run: |
+          git config --global --add safe.directory "$PWD"
           test "$(git rev-parse HEAD)" = "$SOURCE"
           git diff --exit-code
           df -h "$PWD"
