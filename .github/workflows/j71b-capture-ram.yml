@@ -23,9 +23,9 @@ jobs:
           df -h .
           # Both source builds differ from this Orchard base only in CI wiring.
           for source in 498d90a683750b0826fad69be3d36626c3a0eb34 a63fd7f884a1af7cf25467768cc80dafc06f0713; do
-            git diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 "$source" -- src boot kernel devices examples
+            git -c safe.directory="$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 "$source" -- src boot kernel devices examples
           done
-          git diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 HEAD -- src boot kernel devices examples
+          git -c safe.directory="$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 HEAD -- src boot kernel devices examples
       - name: Download exact successful build artifacts and verify their hashes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p out/runtime/orchard out/unpacked out/publication
-          git archive HEAD | tar -x -C out/runtime/orchard
+          git -c safe.directory="$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" archive HEAD | tar -x -C out/runtime/orchard
           tar -xzf out/inputs/kernel/kernel-components-apple-16k.tar.gz -C out/unpacked
           tar -xzf out/inputs/tools/tool-components.tar.gz -C out/unpacked
           test -s out/unpacked/components/quiet/m1n1.bin
