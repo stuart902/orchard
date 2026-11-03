@@ -1,0 +1,95 @@
+name: Experimental J71b microphone kernel and capture tools
+on:
+  push:
+    branches: [ci/j71b-capture-experiment-nov3]
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv python3-dev swig libyaml-dev device-tree-compiler alsa-utils
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: c40e165367f58182881c461cdbabdc0d1ff57e18
+          path: linux-draft
+          persist-credentials: false
+      - name: Verify exact experimental source
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = c40e165367f58182881c461cdbabdc0d1ff57e18
+          test -z "$(git -C linux-draft status --porcelain)"
+          mkdir -p out
+          git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
+      - run: bash kernel/install-toolchain
+      - name: Build standard apple-16k kernel, modules and device trees
+        run: |
+          bash kernel/build apple-16k --kernel-tree "$PWD/linux-draft" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          cp out/kernel-work/output/.config out/kernel.config
+          for option in SND SND_PCM SND_SOC SND_SIMPLE_CARD SND_SOC_DMIC SND_SOC_APPLE_T8010_PDM APPLE_AOP_AUDIO APPLE_AOP_T8010 APPLE_SIO APPLE_SIO_DMA; do
+            grep -Eq "^CONFIG_${option}=(y|m)$" out/kernel.config
+          done
+          for option in MTD MTD_PHRAM OF EXPERT APPLE_RTKIT APPLE_MAILBOX PM; do
+            grep -qx "CONFIG_${option}=y" out/kernel.config
+          done
+          find out/components/kernel/lib/modules -name '*pdm*' -o -name '*aop*' -o -name '*dmic*' > out/audio-module-files.txt
+          grep -q 't8010-pdm.ko' out/audio-module-files.txt
+          grep -q 'aop-audio.ko' out/audio-module-files.txt
+          grep -q 'dmic.ko' out/audio-module-files.txt
+          test -z "$(git -C linux-draft status --porcelain)"
+      - name: Validate enabled J71b device tree
+        run: |
+          python3 -m venv /tmp/pdm-schema
+          /tmp/pdm-schema/bin/pip install dtschema
+          export PATH="/tmp/pdm-schema/bin:$PATH"
+          schemas="sound/apple,t8010-pdm.yaml:sound/simple-card.yaml:sound/dmic-codec.yaml:soc/apple/apple,t8010-aop.yaml"
+          make -C linux-draft O="$PWD/out/kernel-work/output" LLVM=-19 ARCH=arm64 DT_SCHEMA_FILES="$schemas" dt_binding_check
+          dtb=out/components/kernel/dtbs/t8010-j71b.dtb
+          dt-validate -s out/kernel-work/output/Documentation/devicetree/bindings/processed-schema.json -l 'apple,t8010-pdm|simple-card|dmic-codec|apple,t8010-aop' "$dtb" 2>out/targeted-schema-errors.txt
+          test ! -s out/targeted-schema-errors.txt
+          for node in /dmic /microphones /soc/pdm@20a0b4000 /soc/aop@210800000/aop-audio; do
+            test "$(fdtget "$dtb" "$node" status)" = okay
+          done
+          test "$(fdtget "$dtb" /sound simple-audio-card,name)" = 'J71b Speakers'
+          cp "$dtb" out/
+      - name: Stage and verify capture userspace without accessing a device
+        run: python3 ci/stage-capture-userspace.py
+      - name: Download corresponding userspace sources
+        run: |
+          printf '%s\n' 'deb-src http://deb.debian.org/debian bookworm main' 'deb-src http://deb.debian.org/debian-security bookworm-security main' > /etc/apt/sources.list.d/capture-source.list
+          apt-get update
+          mkdir -p out/capture-sources
+          cd out/capture-sources
+          while read -r source; do apt-get source --download-only "$source"; done < ../capture-source-packages.txt
+      - name: Archive components, corresponding source and provenance
+        run: |
+          dpkg-query -W > out/toolchain-packages.lock
+          tar -C out -czf out/kernel-components-apple-16k.tar.gz components
+          tar -C linux-draft --exclude=.git --exclude=.orchard-out -czf out/kernel-source-apple-16k.tar.gz .
+          tar -C out/capture-root -czf out/capture-userspace.tar.gz .
+          tar -C out/capture-sources -czf out/capture-userspace-source.tar.gz .
+          (cd out && sha256sum *.tar.gz *.txt kernel.config toolchain-packages.lock *.dtb > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-capture-experiment-kernel-and-tools
+          path: |
+            out/*.tar.gz
+            out/*.txt
+            out/*.lock
+            out/*.dtb
+            out/kernel.config
+            out/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
