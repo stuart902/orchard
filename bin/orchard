@@ -1,88 +1,39 @@
 #!/bin/sh
-# orchard on PATH: runs the orchard checkout the current directory belongs to.
+# This checkout's orchard: runs exactly the code next to it, wherever it is
+# called from. uv installs the checkout editable, so an edit to a .py file
+# counts from the next command; nothing is packaged.
 #
-# Walking up from the current directory, the first match wins:
-# - an orchard checkout (pyproject.toml of the project "orchard"): that checkout;
-# - an orchard.local.toml with orchard = "PATH": the checkout at PATH, relative
-#   to that file, e.g. your own clone or a worktree on a branch;
-# otherwise mainline: orchard's main branch, cloned into the Orchard cache once
-# and changed only by `orchard update`, so nothing moves under a running build.
+#   bin/orchard ARGS          orchard ARGS, from this checkout
+#   bin/orchard python ARGS   Python in this checkout's environment
 #
-# `orchard python ARGS` runs Python in that checkout's environment, for a
-# distribution's own scripts; `orchard checkout` prints which checkout runs;
-# `orchard update` updates mainline (a checkout of your own is yours: git).
+# The `orchard` on PATH is tools/launcher, which runs the newest nightly.
 set -eu
 
+script=$0
+while [ -L "$script" ]; do
+    target=$(readlink "$script")
+    case $target in
+        /*) script=$target ;;
+        *) script=$(dirname "$script")/$target ;;
+    esac
+done
+root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd -P)
+
+# An older setup linked ~/.local/bin/orchard to mainline's bin/orchard; that
+# role is tools/launcher's now (the newest nightly), until orchard update
+# installs it in the link's place.
 cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
-
-main=$cache/orchard-main
-
-mainline() {
-    if [ ! -d "$main/.git" ]; then
-        mkdir -p "$cache"
-        git clone --quiet "${ORCHARD_MAINLINE_URL:-https://github.com/OrchardLinux/orchard.git}" "$main" >&2
-    fi
-    printf '%s\n' "$main"
-}
-
-update() {
-    if [ "$1" != "$main" ]; then
-        echo "orchard runs your checkout $1; update it with git" >&2
-        return
-    fi
-    if ! git -C "$main" diff --quiet HEAD; then
-        echo "orchard: $main has local changes; not updating mainline" >&2
-        exit 1
-    fi
-    before=$(git -C "$main" rev-parse --short HEAD)
-    git -C "$main" fetch --quiet origin main
-    git -C "$main" checkout --quiet --detach FETCH_HEAD
-    after=$(git -C "$main" rev-parse --short HEAD)
-    if [ "$before" = "$after" ]; then
-        echo "mainline is up to date at $after"
-    else
-        echo "mainline $before -> $after"
-    fi
-}
-
-checkout() {
-    dir=$(pwd -P)
-    while :; do
-        if [ -f "$dir/pyproject.toml" ] && grep -qx 'name = "orchard"' "$dir/pyproject.toml"; then
-            printf '%s\n' "$dir"
-            return
-        fi
-        if [ -f "$dir/orchard.local.toml" ]; then
-            path=$(sed -n 's/^orchard[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$dir/orchard.local.toml" | head -n 1)
-            if [ -n "$path" ]; then
-                case $path in
-                    /*) ;;
-                    "~/"*) path=$HOME/${path#"~/"} ;;
-                    *) path=$dir/$path ;;
-                esac
-                [ -f "$path/pyproject.toml" ] || {
-                    echo "orchard: $dir/orchard.local.toml names $path, which is not an orchard checkout" >&2
-                    exit 1
-                }
-                (cd "$path" && pwd -P)
-                return
-            fi
-        fi
-        [ "$dir" = / ] && break
-        dir=$(dirname "$dir")
-    done
-    mainline
-}
+if [ "$root" = "$(cd "$cache/orchard-main" 2>/dev/null && pwd -P)" ] && [ -f "$root/tools/launcher" ]; then
+    [ "${1:-}" = update ] || echo 'orchard: run orchard update once to install the new launcher' >&2
+    exec sh "$root/tools/launcher" "$@"
+fi
 
 command -v uv >/dev/null 2>&1 || {
     echo 'orchard: install uv: https://docs.astral.sh/uv/getting-started/installation/' >&2
     exit 1
 }
-root=$(checkout)
 export UV_PROJECT_ENVIRONMENT="$root/.venv"
 case ${1:-} in
-    checkout) printf '%s\n' "$root" ;;
-    update) update "$root" ;;
     python) shift; exec uv run --quiet --project "$root" python "$@" ;;
     *) exec uv run --quiet --project "$root" orchard "$@" ;;
 esac

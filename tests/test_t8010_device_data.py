@@ -84,7 +84,7 @@ class T8010DeviceData(unittest.TestCase):
                     self.assertTrue(name.startswith(('brcmfmac4355', 'BCM.apple,', 't8010-smartio.bin',
                                                      profile + '-fwstart')) or name == TOUCH.get(profile), name)
 
-    def test_touch_is_untested_exactly_where_firmware_is_built(self):
+    def test_touch_is_claimed_exactly_where_firmware_is_built(self):
         for profile in BOARDS:
             with self.subTest(profile=profile):
                 device, recipe = self.load(profile)
@@ -92,7 +92,12 @@ class T8010DeviceData(unittest.TestCase):
                 if profile in TOUCH:
                     self.assertIn(TOUCH[profile], names)
                 touch = bool(names & {TOUCH.get(profile), profile + '-fwstart.z2fw'})
-                self.assertEqual(device['features']['touch'], 'untested' if touch else 'missing')
+                # Without its firmware touch cannot work; with it, it is untested until seen
+                # working on the device.
+                if touch:
+                    self.assertIn(device['features']['touch'], ('untested', 'working'))
+                else:
+                    self.assertEqual(device['features']['touch'], 'missing')
 
 
 if __name__ == '__main__':

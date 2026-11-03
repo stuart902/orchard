@@ -52,15 +52,12 @@ one without asking). Any computer with Orchard can launch any installed system.
 
 ## Develop
 
-`orchard` runs from a checkout of this repository: its hardware data and recipes
-are the files beside `src/`. The `orchard` command `./setup` puts on your PATH
-links to the launcher of orchard's `main` in `~/.cache/orchard/orchard-main`, so it
-does not depend on any clone. It runs the checkout the current directory belongs to:
-
-- inside an orchard checkout, that checkout, e.g. a worktree on your branch;
-- elsewhere, the checkout named by the nearest `orchard.local.toml`
-  (`orchard = "../orchard-gpu"`), e.g. in a distribution you work on;
-- otherwise orchard's `main`, which `orchard update` updates (nothing else does).
+The `orchard` command `./setup` puts on your PATH (`tools/launcher`) runs the
+newest nightly of orchard, its tooling and its components, looked up once per
+command; `ORCHARD_VERSION` pins one, and `orchard update` installs the newest
+nightly's launcher. To work on orchard itself, run a checkout's own
+`bin/orchard` by its path: it runs that checkout, from any directory, with
+its hardware data and recipes beside `src/`.
 
 A payload is built for every board of one platform (`out/apple-16k/`, `out/apple-4k/`).
 `orchard run` takes the platform from the attached board; `orchard build` from
@@ -81,7 +78,8 @@ offers). `orchard python ARGS` runs Python in the checkout's environment, e.g. a
 distribution's own scripts or `orchard python -m unittest discover -s tests`. See
 [BUILD.md](BUILD.md) for building components directly.
 
-A distribution checkout has a `distro.toml` naming its build entry. There
+A distribution checkout has an `orchard.toml` with a `[release]` table naming its
+build entry (`name = "..."`, `[release] build = "tools/build.py"`). There
 `orchard build` builds a whole release into `out/releases/dev-DATE-TIME`,
 `orchard run` boots its recovery on the attached device without installing, and
 `orchard install` installs the last build ([tooling](docs/tooling.md)).

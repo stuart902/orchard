@@ -30,7 +30,7 @@ only the Wi-Fi checks.
 The report is `/run/hardware-check.txt`, the kernel log `/run/dmesg.txt`. With USB
 networking up (the host gets 172.16.42.2), both are at `http://172.16.42.1:8080/`.
 
-[`payload.toml`](payload.toml) asks for the booted board's firmware and the kernel
+[`orchard.toml`](orchard.toml) asks for the booted board's firmware and the kernel
 modules. `orchard run` reads the firmware from Apple's restore image the first
 time (about 40 MB, by byte range) and keeps it in Orchard's private cache; it is
 added for the board you boot and never written to this directory. The image

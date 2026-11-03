@@ -7,11 +7,13 @@ The iPad Air 2's touchscreen is an N1 like the iPad 5's: iOS drives
 both with AppleMultitouchN1SPI, and its personality C1F15,2 ("J82",
 iPadOS 15.8) differs from the iPad 5's C1F15,1 only in fll-mval. The
 touch-size-id, parser type and options are the same, so the descriptor
-values are too. Add it as match data of the iPad 5's N1 runtime.
+values are too, except the N1 family: the J81 reports 22, in iPadOS
+15.8.5 and in Linux, where the iPad 5 reports 21. Add it as match data
+of the iPad 5's N1 runtime.
 
-iOS leaves the Air 2's display-sync pin an input (GPIO function code 2,
-mask 0x270 value 0x210) where the iPad 5 routes it to the controller
-(code 3, route 2). Make the display-sync pin states optional: a board
+The Air 2 ADT gives display sync function code 2, while the iPad 5
+routes it to the controller with code 3. The live iPadOS pad mode has
+not been measured. Make the display-sync pin states optional: a board
 without them keeps the pin as it is.
 
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
@@ -85,7 +87,7 @@ index c0f0003..19d9f36 100644
 +	.device_info_attempts = 4,
 +	.device_info_retry_us = 3000,
 +	.interface = 1,
-+	.family = 21,
++	.family = 22,
 +	.rows = 40,
 +	.columns = 30,
 +	.surface_width = 14745,

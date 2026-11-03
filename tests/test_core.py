@@ -261,6 +261,27 @@ class UserOrchard(Store):
             installer.update(opener=lambda url: io.BytesIO(sums if url.endswith('SHA256SUMS') else b'other'))
 
 
+class FreeSpace(unittest.TestCase):
+    def usage(self, free_gb):
+        return mock.patch('orchard.cache.shutil.disk_usage', return_value=shutil._ntuple_diskusage(0, 0, int(free_gb * 1e9)))
+
+    def test_a_build_refuses_to_start_on_a_nearly_full_disk(self):
+        from orchard.cache import check_free
+        with self.usage(4), mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('ORCHARD_MIN_FREE_GB', None)
+            with self.assertRaisesRegex(ValueError, 'Only 4.0 GB free.*needs 10 GB'):
+                check_free(Path(tempfile.gettempdir()) / 'not-there-yet')
+        with self.usage(11):
+            check_free(tempfile.gettempdir())
+
+    def test_the_limit_can_be_changed_or_turned_off(self):
+        from orchard.cache import check_free
+        with self.usage(4), mock.patch.dict(os.environ, {'ORCHARD_MIN_FREE_GB': '0'}):
+            check_free(tempfile.gettempdir())
+        with self.usage(4), mock.patch.dict(os.environ, {'ORCHARD_MIN_FREE_GB': '3'}):
+            check_free(tempfile.gettempdir())
+
+
 class StateVersion(unittest.TestCase):
     def test_a_newer_layout_is_refused_and_an_older_one_recorded(self):
         with tempfile.TemporaryDirectory() as temporary:

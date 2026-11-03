@@ -58,8 +58,8 @@ def select(entries, wanted, clock, input_fn):
     bootable = [e for e in entries if not e.problems]
     if not bootable:
         raise ValueError('No bootable entry on this device; nothing was started')
-    if len(entries) == 1:
-        return entries[0]
+    if len(bootable) == 1:
+        return bootable[0]  # the only system that can start: no question to answer
     for number, entry in enumerate(entries, 1):
         print(describe(number, entry, entries))
     default = entries.index(bootable[0]) + 1

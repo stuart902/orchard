@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 # The layout of Orchard's directories. A tool that finds a newer version
@@ -43,3 +44,26 @@ def check_state(root=None):
         partial.write_text(json.dumps({'version': STATE_VERSION}) + '\n')
         os.replace(partial, record)
     return found
+
+
+MIN_FREE_GB = 10  # a kernel, root or image build; ORCHARD_MIN_FREE_GB changes it, 0 turns the check off
+
+
+def check_free(*paths):
+    """Refuse to start a build when a filesystem under PATHS has less than MIN_FREE_GB free.
+
+    A build that runs out of space halfway leaves broken work directories and
+    stops other builds on the host; refusing up front costs nothing.
+    """
+    needed = float(os.environ.get('ORCHARD_MIN_FREE_GB', MIN_FREE_GB))
+    if needed <= 0:
+        return
+    for path in paths:
+        path = Path(path)
+        while not path.exists() and path != path.parent:
+            path = path.parent
+        free = shutil.disk_usage(path).free / 1e9
+        if free < needed:
+            raise ValueError(f'Only {free:.1f} GB free on the disk of {path}; a build needs {needed:g} GB. '
+                             'Free space first (orchard cache --prune, your own out/ builds), or set '
+                             'ORCHARD_MIN_FREE_GB to change the limit')

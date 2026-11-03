@@ -53,7 +53,7 @@ edits just repack the payload. The first build after this cache-format change
 populates the shared base/SDK; prior outputs and compiler state are not deleted.
 
 Modules are opt-in for manual driver investigation: add `modules = true` to a
-`payload.toml` beside `init`. That includes matching modules but does not load
+`orchard.toml` beside `init`. That includes matching modules but does not load
 them. The observation script itself does not require them.
 
 Optional `--kernel-dir DIR --busybox FILE --loader FILE --pongo FILE` reuses local

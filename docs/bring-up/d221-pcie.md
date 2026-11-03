@@ -8,7 +8,7 @@ PCIe bring-up did, but the A11 layout differs from it in several places.
 
 The values below are from the runtime ADT of one `iPhone10,6` (`d221`),
 firmware `iBoot-8422.142.2.700.1`. The property and node names used in this
-file (`rc`, `phy`, `phy-ip`, `nvmmu`, `portN`) follow the driver and this
+file (`rc`, `phy`, `phy-ip`, `portN`) follow the driver and this
 repository; they are not ADT properties, which are unnamed.
 
 ## Host bridge (`apcie`)
@@ -20,23 +20,23 @@ repository; they are not ADT properties, which are unnamed.
 | `rc` | `0x600000000` (0x50000) |
 | `phy` | `0x600080000` (0x4000) |
 | `phy-ip` | `0x6000c0000` (0x40000) |
-| port regs | `0x60N000000` + nvmmu at `0x60N004000`, N = 1..4, each 0x4000 |
+| port regs | `0x60N000000`, N = 1..4, each 0x4000 |
 | interrupts (SPI) | 340, 343, 346, 349 (ports 0–3) |
 | `clock-gates` | 56, 57, 58 |
 | `power-gates` | 56 |
 | MSI | address `0xbffff000`, vector offset 352 |
 | `perst-to-refclk-delay-us` | 60 |
 
-The ADT lists a 0x4000 window at `0x60N004000` next to each port's register
-block at `0x60N000000`. This series reads that window as a per-port NVMMU;
-that is an inference, not an ADT property name. The T8010 layout carries a
-single `nvmmu` window at port 0 + 0x4000 instead.
+The ADT also lists a 0x4000 window at `0x60N004000` next to each port's
+register block. Nothing identifies it: the ADT entries are unnamed and
+"nvmmu" does not occur in the iOS 16.7 d221 kernelcache. The device tree
+leaves it out until something uses it.
 
 The ADT also carries the SoC tunables this controller needs:
 `apcie-common-tunables`, `apcie-phy-tunables`, and per-bridge
 `apcie-config-tunables` / `pcie-rc-tunables`. These are the A11-specific
 PHY/config register programs; they are not transcribed here, and the h9p
-driver has no T8015 match-data yet.
+driver's T8015 match data arrives with this series' `PCI: apple-h9p: Add T8015 support` patch.
 
 ## Wi-Fi port (pci-bridge3)
 
@@ -73,19 +73,24 @@ the same pair the other Apple boards use; the meaning of bit 59 in
 | `dart-apcie2` | `0x603008000` | 347 | `mapper-apcie2` |
 | `dart-apcie3` | `0x604008000` | 350 | `mapper-apcie3` (the Wi-Fi's iommu-parent) |
 
+## Link bring-up
+
+On one `d221` (kernel `7.3.0-rc1-orchard-apple-16k`), port 3 trains to L0
+(LTSSM `0x11`, in 102 ms) and the endpoint enumerates as `0000:01:00.0`
+`14e4:440a` (BCM4357) at 5.0 GT/s x1, behind root port `0000:00:03.0`
+`106b:100a`. `link_present` reads 0 throughout; `BIT(3)` of LINKSTS is a
+T8015 card-detect semantic, not a failure. The SMC `gP0e` rail is active-high.
+
 ## What remains for a working Wi-Fi port
 
-1. h9p PCIe driver: a T8015 match-data entry with the A11 tunables, the
-   per-port NVMMU layout and the link-training sequence.
-2. The device-tree series that describes the controller, its DARTs and the
-   Wi-Fi port is written but held; it carries every new node as `disabled`
-   until the driver match data exists.
-3. Power control: the module's regulator and reset sequence, from the ADT
-   `function-reg_on` (SMC key `gP0e`) and the pwrctrl sequence the BCM4350
-   path already uses.
-4. Host wake: the endpoint's host-wake interrupt, alongside the
+1. Host wake: the endpoint's host-wake interrupt, alongside the
    `device-wake` line in the table above.
-5. brcmfmac has no BCM4357 entry, so the Wi-Fi driver side is missing too.
-6. The endpoint's PCI ID is not known; `0x43d9` is the BCM43570's ID, so the
-   `wifi@0,0` node stays out of the device tree until the ID is read from
-   the hardware.
+2. brcmfmac has no BCM4357 (`14e4:440a`) entry, so the Wi-Fi driver side is
+   still missing; that is a linux-wireless topic and does not block the PCIe
+   series.
+3. DMA translation for the Wi-Fi port: at probe, `apple-dart 604008000.iommu`
+   reports `translation setup for streams 1 failed: -5` and `blocking DMA for
+   streams 1`, with an `iommu_setup_default_domain` warning from
+   `apple_h9p_pcie_probe`. Enumeration is not affected, but the endpoint has
+   no working DMA mapping, so this has to be fixed before brcmfmac can run
+   (seen on a d221 with the series at a538a0f).

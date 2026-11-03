@@ -35,7 +35,7 @@ install = false
 status = "experimental"
 caveats = [
   "A Linux RAM boot reaches a USB serial shell, but no installer or launcher release exists yet (install is off).",
-  "Touch, storage and charging are untested; the touch controller is not the Z2 the iPad/iPhone 7 use (ADT: hid-transport,k1).",
+  "Touch and charging are untested; internal storage is only read (nvme-apple, read-only RAM boot); the touch controller is not the Z2 the iPad/iPhone 7 use (ADT: hid-transport,k1).",
   "The mainline t8015-x device tree describes the SoC alone; Wi-Fi, Bluetooth and backlight nodes are not in it yet.",
 ]
 wifi = false # The t8015-x DT has no Wi-Fi node; the recipe ships the BCM4357 firmware only.
@@ -48,7 +48,7 @@ display = "partial"
 touch = "missing"
 wifi = "missing"
 bluetooth = "missing"
-storage = "untested"
+storage = "partial" # nvme-apple binds; nvme0n1 and its partition table (p1) read, writes untested.
 battery = "untested"
 charging = "missing"
 backlight = "untested"

@@ -21,9 +21,11 @@ their boards. No repository and no per-person setting names a board. Distro-owne
 producers can use `orchard.build.configured_device(directory)`. Installation does
 not read it and still rejects incompatible devices.
 
-## payload.toml
+## orchard.toml
 
-An optional `payload.toml` beside `init` describes the payload itself, never its board:
+An optional `orchard.toml` beside `init` names the payload (`name = "..."`) and
+describes it under `[payload]`, never its board (the older `payload.toml` is
+still read, with a notice):
 
 - `transport = false` leaves the USB session helper (network, SSH) out;
 - `modules = true` stages the kernel's modules without loading them;
@@ -41,7 +43,7 @@ CLI's `rootfs/` input are currently rejected, not silently dereferenced.
 
 The CLI supplies BusyBox, the hardware's other static tools (Dropbear, and
 `wpa_supplicant`, `wpa_cli` and `iw` for Wi-Fi), the device kernel and boot
-framing, then writes artifacts to `DIRECTORY/out/PLATFORM/`; `payload.toml` decides
+framing, then writes artifacts to `DIRECTORY/out/PLATFORM/`; `orchard.toml` decides
 about modules and firmware (see above). Pongo is the latest release's when this
 checkout's Pongo recipe (`boot/quiet`) is unchanged since, so building needs no Xcode;
 a changed recipe is built on macOS. Component override flags: `--hardware`, `--cache`, `--kernel-dir`, `--busybox`, `--loader`, `--pongo`.

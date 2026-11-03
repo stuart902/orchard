@@ -7,6 +7,12 @@ from pathlib import Path
 import stat
 
 
+def _mode(path):
+    """Permissions without group/other write: a builder's umask (002 on many hosts) must not
+    make /root or a file group-writable in the image; dropbear refuses keys under such a /root."""
+    return path.stat().st_mode & 0o755
+
+
 def entries(roots):
     selected = {}
     for root in roots:
@@ -17,9 +23,9 @@ def entries(roots):
             if path.is_symlink():
                 mode, data = stat.S_IFLNK | 0o777, os.readlink(path).encode()
             elif path.is_dir():
-                mode, data = stat.S_IFDIR | (path.stat().st_mode & 0o777), b''
+                mode, data = stat.S_IFDIR | _mode(path), b''
             elif path.is_file():
-                mode, data = stat.S_IFREG | (path.stat().st_mode & 0o777), path.read_bytes()
+                mode, data = stat.S_IFREG | _mode(path), path.read_bytes()
             else:
                 raise ValueError(f'unsupported initramfs entry: {path}')
             if name in selected and selected[name] != (mode, data):

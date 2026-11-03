@@ -33,7 +33,7 @@ from .cache import cache_root
 PACKAGE = Path(__file__).resolve().parent
 # Development tooling (building kernels, payloads, distributions), not the core.
 DEVELOPMENT = {'__main__.py', 'boot.py', 'build.py', 'buildenv.py', 'command.py', 'components.py', 'distro.py', 'kernel.py',
-               'kernel_sdk.py', 'ram.py', 'ram_session.py', 'sources.py', 'image'}
+               'inputs.py', 'kernel_sdk.py', 'published.py', 'ram.py', 'ram_session.py', 'sources.py', 'image'}
 MAX_CORE = 128 * 1024 * 1024
 RELEASES = 'https://github.com/OrchardLinux/orchard/releases'
 MARKER = '# orchard: the user\'s orchard'

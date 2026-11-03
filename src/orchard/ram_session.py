@@ -4,7 +4,7 @@ An installed system is reached as its user with this computer's key, which
 the installer imported (orchard.computer_key); root is sudo, as on any OS.
 
 `orchard build` adds the usb-session helper and this host's RAM key to every
-payload unless payload.toml says transport = false. The device's host key is
+payload unless orchard.toml says transport = false. The device's host key is
 generated per boot and pinned over USB serial, which is physical and trusted.
 SSH carries everything else. Without SSH, push and pull fall back to
 length-prefixed serial transfers checked by SHA-256.

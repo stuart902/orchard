@@ -209,27 +209,28 @@ def _podman_machine_step():
 
 
 def _launcher_step():
-    """`orchard` on PATH: a link to mainline's launcher; `orchard update` updates both."""
-    from .sources import cache_root
-    mainline = cache_root() / 'orchard-main'
-    launcher = mainline / 'bin/orchard'
-    link = Path.home() / '.local/bin/orchard'
-    if link.is_symlink() and os.readlink(link) == str(launcher) and launcher.is_file():
-        return Step('orchard command', BUILD, True, f'{link} -> {launcher}')
-    if link.exists() and not link.is_symlink():
-        return Step('orchard command', BUILD, False, f'{link} is a file, not a link; move it away, then rerun')
+    """`orchard` on PATH: a copy of this checkout's tools/launcher, which runs the newest nightly.
+
+    `orchard update` replaces it with the newest nightly's. A checkout's own
+    bin/orchard runs that checkout; it is called by its path, never put on PATH.
+    """
+    from .hardware import ROOT
+    source = ROOT / 'tools/launcher'
+    launcher = Path.home() / '.local/bin/orchard'
+    if launcher.is_file() and not launcher.is_symlink() and launcher.read_bytes() == source.read_bytes():
+        return Step('orchard command', BUILD, True, f'{launcher} runs the newest nightly')
+    if launcher.exists() and not launcher.is_symlink() and b'tools/launcher' not in launcher.read_bytes() \
+            and b'orchard on PATH' not in launcher.read_bytes():
+        return Step('orchard command', BUILD, False, f'{launcher} is another program; move it away, then rerun')
     def apply():
-        if not (mainline / '.git').is_dir():
-            mainline.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(['git', 'clone', '--quiet', os.environ.get('ORCHARD_MAINLINE_URL', MAINLINE_URL),
-                            str(mainline)], check=True)
-        link.parent.mkdir(parents=True, exist_ok=True)
-        temporary = link.with_name('.orchard-link')
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        temporary = launcher.with_name('.orchard-launcher')
         temporary.unlink(missing_ok=True)
-        temporary.symlink_to(launcher)
-        os.replace(temporary, link)
-    replacing = f' (replacing the link to {os.readlink(link)})' if link.is_symlink() else ''
-    return Step('orchard command', BUILD, False, f'link {link} to orchard main\'s launcher{replacing}', apply)
+        shutil.copyfile(source, temporary)
+        temporary.chmod(0o755)
+        os.replace(temporary, launcher)
+    replacing = f' (replacing the link to {os.readlink(launcher)})' if launcher.is_symlink() else ''
+    return Step('orchard command', BUILD, False, f'install {launcher}, which runs the newest nightly{replacing}', apply)
 
 
 def _path_step():

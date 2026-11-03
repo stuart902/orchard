@@ -1,5 +1,6 @@
-# payload.toml: how `orchard build` turns this directory into a RAM payload.
-#
+# orchard.toml: how `orchard build` turns this directory into a RAM payload.
+name = "minimal-boot"
+
 # A payload is `init` (the first program the kernel runs) plus the files under
 # `rootfs/`. `orchard build` makes one for every board of a platform; `orchard
 # run` builds what is missing and boots the attached board. This file is
@@ -10,4 +11,5 @@
 # (/usr/libexec/orchard/usb-session: USB networking and SSH), which `init` can
 # start for `orchard shell`, `exec`, `push` and `pull`. This example keeps to
 # the USB serial shell, so it leaves the helper out.
+[payload]
 transport = false

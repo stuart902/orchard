@@ -62,8 +62,12 @@ fi
 # last build, and a patch change recompiles only the files it touches.
 cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
 if [[ -n $tree ]]; then
-  # One build directory per kernel tree, so trees never wait for each other.
-  work=${work:-"$cache/kernel-work/tree-$platform-$("$python" -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])' "$tree")"}
+  # A kernel tree builds inside itself, in a directory its git ignores: the
+  # output lives and goes with the tree, and trees never wait for each other.
+  work=${work:-"$tree/.orchard-out/$platform"}
+  exclude=$(git -C "$tree" rev-parse --git-path info/exclude)
+  [[ $exclude == /* ]] || exclude=$tree/$exclude
+  grep -qxF '/.orchard-out/' "$exclude" 2>/dev/null || { mkdir -p "$(dirname "$exclude")"; echo '/.orchard-out/' >> "$exclude"; }
 else
   work=${work:-"$cache/kernel-work/$platform-${commit:0:12}"}
 fi

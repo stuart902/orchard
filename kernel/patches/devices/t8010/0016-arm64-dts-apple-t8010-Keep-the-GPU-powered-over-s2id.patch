@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 4 Nov 2026 03:24:16 +0800
+Subject: [PATCH] arm64: dts: apple: t8010: Keep the GPU powered over s2idle
+
+The GPU firmware cannot yet be brought back after its power domain was
+turned off, so a suspend that gates the GPU leaves rendering dead after
+wake. Keep the domain on until the GPU driver can save and restore it.
+
+always-on also keeps the domain powered while awake, including on a
+system that renders in software and never binds the GPU driver. Remove
+this once the driver handles suspend itself.
+
+Verified on the iPad 6 (J71b) with the GPU desktop across a 69 s sleep.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/apple/t8010-pmgr.dtsi | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi b/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi
+index 921c3a570ae4..828342cab683 100644
+--- a/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi
+@@ -637,6 +637,8 @@ ps_gfx: power-controller@80328 {
+ 		#power-domain-cells = <0>;
+ 		#reset-cells = <0>;
+ 		label = "gfx";
++		apple,always-on; /* GPU firmware state cannot be restored yet */
++		apple,manual-pm;
+ 	};
+ 
+ 	ps_sep: power-controller@80400 {

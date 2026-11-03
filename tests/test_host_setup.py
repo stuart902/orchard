@@ -154,7 +154,10 @@ class Requirements(unittest.TestCase):
         self.assertIn('[todo ] palera1n', shown[0])
         self.assertIn('[todo ] orchard command', shown[0])
         self.assertEqual(questions, ['Do the 2 steps marked "todo"? [Y/n] '])
-        self.assertEqual(os.readlink(self.root / '.local/bin/orchard'), str(self.mainline / 'bin/orchard'))
+        from orchard.hardware import ROOT
+        launcher = self.root / '.local/bin/orchard'
+        self.assertFalse(launcher.is_symlink())
+        self.assertEqual(launcher.read_bytes(), (ROOT / 'tools/launcher').read_bytes())
         self.assertEqual((self.root / '.local/bin/palera1n').read_bytes(), b'palera')
         ran = len(self.ran)
         questions.clear()

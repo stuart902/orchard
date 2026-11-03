@@ -1,8 +1,10 @@
 """A distribution checkout as an orchard project: build its release, boot its recovery.
 
-`distro.toml` at the root of a distribution's checkout makes it one:
+`orchard.toml` with a [release] table at the root of a distribution's
+checkout makes it one (orchard.project; the older distro.toml is still read):
 
     name = "omarchy-a"          # the distro of its index.toml
+    [release]
     build = "tools/build"       # its build entry, relative to the checkout
     selects-platform = true     # optional: the entry takes --platform
 
@@ -32,6 +34,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -45,24 +48,19 @@ _VERSION = re.compile(r'[0-9A-Za-z][0-9A-Za-z._+-]{0,127}')
 
 
 def find(directory):
-    """The distribution checkout DIRECTORY is in (the nearest distro.toml up to its repository's root), or None."""
-    directory = Path(directory).expanduser().resolve()
-    for parent in (directory, *directory.parents):
-        if (parent / DISTRO).is_file():
-            return parent
-        if (parent / '.git').exists():
-            break
-    return None
+    """The distribution checkout DIRECTORY is in (the nearest orchard.toml with [release], or the older
+    distro.toml, up to its repository's root), or None."""
+    from . import project
+    return project.find_release(directory)
 
 
 def settings(root):
-    """ROOT/distro.toml, checked: {'name': str, 'build': Path}."""
-    path = Path(root) / DISTRO
-    try:
-        with path.open('rb') as stream:
-            value = tomllib.load(stream)
-    except (OSError, ValueError) as error:
-        raise ValueError(f'{path}: {error}') from error
+    """ROOT's orchard.toml [release] (or the older distro.toml), checked: {'name': str, 'build': Path}."""
+    from . import project
+    kind, name, value, path = project.read(Path(root))
+    if kind != 'release':
+        raise ValueError(f'{root} has no orchard.toml with [release]')
+    value = {**value, 'name': name}
     unknown = set(value) - {'name', 'build', 'selects-platform'}
     if unknown:
         raise ValueError(f'{path}: unknown settings {", ".join(sorted(unknown))}; '
@@ -90,11 +88,11 @@ def default_version(now=None):
     return now.strftime('dev-%Y%m%d-%H%M%S')
 
 
-def build(root, *, version=None, platforms=None):
+def build(root, *, version=None, platforms=None, kernel_tree=None):
     """Run ROOT's build entry into out/releases/VERSION, check the release, record it; returns its index.
 
     PLATFORMS: a list of platform names or 'all', passed as --platform to an
-    entry that selects platforms (distro.toml selects-platform = true); None
+    entry that selects platforms (orchard.toml [release] selects-platform = true); None
     for an entry that builds every platform.
     """
     from .hardware import ROOT
@@ -114,7 +112,7 @@ def build(root, *, version=None, platforms=None):
     if platforms is not None:
         if not distro['selects_platform']:
             raise ValueError(f'{distro["name"]}\'s build entry builds every platform and takes no --platform; '
-                             'update the distribution (distro.toml selects-platform = true)')
+                             'update the distribution (orchard.toml [release] selects-platform = true)')
         argv += [part for name in ([platforms] if platforms == 'all' else platforms)
                  for part in ('--platform', name)]
     elif distro['selects_platform']:
@@ -122,6 +120,19 @@ def build(root, *, version=None, platforms=None):
                          'orchard.local.toml or the attached board')
     print('+', ' '.join(argv), flush=True)
     environment = {**os.environ, 'ORCHARD_PYTHON': sys.executable, 'ORCHARD_CHECKOUT': str(ROOT)}
+    tree = ''
+    if kernel_tree is not None:
+        # orchard.inputs, which the build script runs, builds the kernels from this tree.
+        environment['ORCHARD_KERNEL_TREE'] = str(kernel_tree)
+        print(f'Kernel from the tree {kernel_tree}', flush=True)
+        tree = f'ORCHARD_KERNEL_TREE={shlex.quote(str(kernel_tree))} '
+    # What orchard runs, as the plain command: the distribution composes the rest itself.
+    (output.parent / f'{version}.commands.sh').write_text(
+        '#!/bin/sh\n# What orchard build ran for this release (--explain prints it); the build script\n'
+        '# runs orchard\'s producers itself, from the snapshot ORCHARD_CHECKOUT names; how orchard.inputs\n'
+        '# got each component (built, reused, or downloaded from a nightly) is in its JSON, under "produced".\nset -eu\n'
+        f'cd {shlex.quote(str(root))}\n'
+        f'{tree}ORCHARD_CHECKOUT={shlex.quote(str(ROOT))} ' + ' '.join(map(shlex.quote, argv)) + '\n')
     subprocess.run(argv, cwd=root, env=environment, check=True)
     index = output / 'index.toml'
     if not index.is_file():
@@ -130,7 +141,7 @@ def build(root, *, version=None, platforms=None):
     document = load(index)
     _, manifest = resolve_local(document, output)
     if manifest['distro'] != distro['name']:
-        raise ValueError(f'The release is {manifest["distro"]!r}, but distro.toml names {distro["name"]!r}')
+        raise ValueError(f'The release is {manifest["distro"]!r}, but orchard.toml names {distro["name"]!r}')
     if manifest['version'] != version:
         raise ValueError(f'The release says version {manifest["version"]!r}, but was built as {version!r}')
     verify_local_receipts(document, output)
@@ -153,7 +164,7 @@ def latest(root):
     return index
 
 
-def run(root, *, build_first=True, version=None, yes=False, progress=None):
+def run(root, *, build_first=True, version=None, yes=False, progress=None, kernel_tree=None):
     """Build (unless BUILD_FIRST is false), then boot the release's recovery on the attached board from RAM.
 
     Nothing is installed: the recovery is the installer's system, and its
@@ -174,7 +185,7 @@ def run(root, *, build_first=True, version=None, yes=False, progress=None):
             if board is None:
                 raise ValueError('No described device is attached: connect it, then run again')
             platforms = [ram.resolve_platform(root, ROOT, device=board)]
-        index = build(root, version=version, platforms=platforms)
+        index = build(root, version=version, platforms=platforms, kernel_tree=kernel_tree)
     else:
         index = latest(root)
     with operation_lock():

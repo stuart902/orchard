@@ -3,12 +3,13 @@
 `usr/lib/modules/RELEASE/` holds the kernel (`vmlinuz`), orchard's initrd
 (`initrd`, see boot/initramfs/root), the DTB of every board of the platform
 (`dtb/`) and the modules. The regulatory database and the hardware defaults
-of `system/defaults` (vendor configuration and the sound cards' UCM
-profiles) complete it, and `usr/lib/orchard/platform.json` says
-what it is. The installer writes the layer into a root after the distro's
-root image, then writes the boot entry from it (docs/boot-contract.md). Root
-images carry no kernel, so one serves every platform, and a kernel change
-needs a new layer, not a new root image.
+of `system/defaults` (vendor configuration, the sound cards' UCM profiles and
+orchard-sleep, which allows suspend only on boards listed in
+`usr/lib/orchard/suspend-boards`) complete it, and
+`usr/lib/orchard/platform.json` says what it is. The installer writes the
+layer into a root after the distro's root image, then writes the boot entry
+from it (docs/boot-contract.md). Root images carry no kernel, so one serves
+every platform, and a kernel change needs a new layer, not a new root image.
 
 Members are regular files under `usr/` only, owned by root, with fixed
 times, so the same inputs give the same archive.
@@ -21,6 +22,7 @@ from pathlib import Path
 import stat
 import tarfile
 import tempfile
+import tomllib
 
 from ..hardware import ROOT
 from .integrity import sha
@@ -59,8 +61,15 @@ def platforms(hardware=None):
 
 
 def kernel(platform, *, hardware=None, cache=None):
-    """The staged kernel bundle of PLATFORM, built or reused from the cache."""
-    from ..build import prepare_kernel
+    """The staged kernel bundle of PLATFORM: the nightly's when it was built from
+    this checkout's kernel state (orchard.published), else built or reused from
+    the cache. ORCHARD_KERNEL=local always compiles."""
+    from ..build import cache_root, prepare_kernel
+    from ..hardware import ROOT
+    from .. import published
+    found = published.kernel(Path(hardware or ROOT), Path(cache) if cache else cache_root(), platform)
+    if found is not None:
+        return found
     return prepare_kernel(hardware, cache, device=sorted(boards(platform, hardware))[0])
 
 
@@ -109,6 +118,20 @@ def initrd(modules, release, busybox, *, hardware=None):
         return output.read_bytes()
 
 
+def suspend_boards(board_dtbs, hardware):
+    """The device-tree compatibles of the boards whose suspend works ([features] suspend = "working").
+
+    orchard-sleep (system/defaults) allows suspend at boot only on these;
+    see docs/bring-up/suspend.md.
+    """
+    names = set()
+    for board in board_dtbs:
+        descriptor = tomllib.loads((Path(hardware) / 'devices' / board / 'device.toml').read_text())
+        if descriptor.get('features', {}).get('suspend') == 'working':
+            names.update(descriptor['device']['dt_compatible'])
+    return ''.join(name + '\n' for name in sorted(names)).encode()
+
+
 def files(bundle, platform, board_dtbs, *, busybox, hardware=None):
     """(kernel release, {path: (data, mode)}) of PLATFORM's layer from a staged kernel BUNDLE."""
     hardware = Path(hardware or ROOT)
@@ -131,7 +154,8 @@ def files(bundle, platform, board_dtbs, *, busybox, hardware=None):
             name = path.relative_to(defaults).as_posix()
             if not name.startswith(DEFAULTS_UNDER):
                 raise ValueError(f'System defaults belong under /usr/lib or /usr/share/alsa/ucm2: {name}')
-            result[name] = (path.read_bytes(), 0o644)
+            result[name] = (path.read_bytes(), 0o755 if path.stat().st_mode & 0o111 else 0o644)
+    result['usr/lib/orchard/suspend-boards'] = (suspend_boards(board_dtbs, hardware), 0o644)
     description = {'schema': SCHEMA, 'platform': platform, 'kernel_release': release,
                    'boards': dict(sorted(board_dtbs.items()))}
     result['usr/lib/orchard/platform.json'] = ((json.dumps(description, indent=2) + '\n').encode(), 0o644)
@@ -177,9 +201,13 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='directory for the layer')
     parser.add_argument('--kernel-dir', type=Path, help='a staged kernel bundle (default: build or reuse it)')
     parser.add_argument('--busybox', type=Path, help="orchard's static BusyBox (default: build or reuse it)")
+    parser.add_argument('--receipt', type=Path, help="also write the layer's receipt (JSON) here")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    print(json.dumps(build(args.platform, args.output, bundle=args.kernel_dir, busybox=args.busybox), indent=2))
+    receipt = build(args.platform, args.output, bundle=args.kernel_dir, busybox=args.busybox)
+    if args.receipt:
+        args.receipt.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+    print(json.dumps(receipt, indent=2))
 
 
 if __name__ == '__main__':

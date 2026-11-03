@@ -36,34 +36,31 @@ nothing. The requirements are one list shared with the installer's boot tools
 (`setup-host`): OpenSSH, libusb, palera1n and Linux USB permissions for booting;
 git, Podman (and its machine on macOS), the `orchard` command and PATH for building.
 Packages come from glu, then Homebrew on macOS (neither is installed for you), or
-apt, dnf or pacman. The `orchard` command links to mainline's launcher, so it
-does not depend on any clone. Pongo comes from the latest release while its recipe
+apt, dnf or pacman. The `orchard` command is a copy of `tools/launcher`,
+which runs the newest nightly, so it does not depend on any clone. Pongo comes from the latest release while its recipe
 is unchanged, so most builds need no Xcode.
 
 ## Development: which orchard runs (done)
 
-`bin/orchard` is the `orchard` on PATH. Walking up from the current directory, the first match wins:
+Two launchers, and neither looks at the current directory:
 
-1. an orchard checkout (`pyproject.toml` of the project `orchard`): that checkout, e.g. a worktree on your branch;
-2. an `orchard.local.toml` with `orchard = "PATH"`: the checkout at PATH;
-3. otherwise mainline: orchard's `main`, cloned into `~/.cache/orchard/orchard-main` once and changed only by `orchard update`, so nothing moves under a running build.
+- **`orchard` on PATH** is `tools/launcher` (`./setup` installs it, `orchard update` replaces it with the newest nightly's). Every command runs the newest nightly: looked up once (`nightly/latest.json`), a shallow clone of its tag in `~/.cache/orchard/tooling/NAME`, so a command runs one version from start to end. Offline: the newest cached nightly. `ORCHARD_VERSION=nightly-YYYYMMDD-COMMIT` (or `vX.Y.Z`) pins one, e.g. to reproduce a bug. A launcher older than the nightly it runs says so.
+- **A checkout's `bin/orchard`** runs that checkout, called by its path (`~/src/orchard/bin/orchard build …`), from any directory: that is how to work on orchard itself, in a worktree per branch (`git worktree add ../orchard-gpu -b gpu-a10`). uv installs it editable; an edit counts from the next command.
 
-The checkout's environment is `<checkout>/.venv`, managed by uv. `orchard python ARGS` runs a distribution's own scripts and tests in it; `orchard checkout` prints which checkout runs.
-
-Parallel work gets one orchard worktree per branch (`git worktree add ../orchard-gpu -b gpu-a10`). Two agents in two checkouts never share an orchard, and nothing pins one.
+`orchard python ARGS` runs Python in the running version's environment, for a distribution's own scripts. An `orchard = "PATH"` line in `orchard.local.toml`, which used to choose the checkout, is refused with what to use instead.
 
 ## Files (done)
 
 | File | Committed | Contains |
 |---|---|---|
-| `payload.toml` beside a payload's `init` | yes | the payload's own settings: `transport`, `modules`, `firmware`; commented, since the examples teach the system |
-| `orchard.local.toml` | never | this checkout's choices: `orchard = "PATH"`, `device = "BOARD"` |
+| `orchard.toml` beside a payload's `init` or at a distribution's root | yes | the project: `name`, and `[payload]` (`transport`, `modules`, `firmware`) or `[release]` (`build`, `selects-platform`); commented, since the examples teach the system |
+| `orchard.local.toml` | never | this checkout's build arguments: `platform`, `device = "BOARD"`, `kernel-tree` |
 
 No repository and no per-person setting names a board: many contributors work on several. A payload serves every board of one platform (`out/PLATFORM/`); `orchard run` takes the platform from the attached board, builds what is missing and adds that board's firmware as its own layer from the private cache; `orchard build` takes it from `--platform`, `--device`, `orchard.local.toml` or the attached board (listing USB devices only). A distribution release serves every board: one root image, and per platform a recovery and orchard's platform layer (kernel, DTBs, modules; see [boot contract](boot-contract.md#kernel-dtbs-and-modules)). Which boards are supported, and how well, is only orchard's device data (`status`, `caveats`), which the installer shows.
 
 ## Distributions (done)
 
-A distribution has no submodule, no launcher and no root configuration. `orchard` runs mainline, or the orchard checkout its `orchard.local.toml` names. Distribution CI tests against orchard `main`; a release build uses one published orchard release whole, its tools and its per-platform component bundles alike (`ORCHARD_REF` overrides the tools). A release's manifest and build receipt record the exact orchard commit (`orchard.hardware.revision()`).
+A distribution has no submodule, no launcher and no root configuration. `orchard` runs the newest nightly, whose components it then takes too; a checkout's `bin/orchard` runs that checkout. Distribution CI tests against orchard `main`; a release build uses one published orchard release whole, its tools and its per-platform component bundles alike (`ORCHARD_REF` overrides the tools). A release's manifest and build receipt record the exact orchard commit (`orchard.hardware.revision()`).
 
 ## Testing an install without a device
 
@@ -104,7 +101,7 @@ board:
   layer, which the installer writes into the root, and the installer writes the boot
   entry; a distribution builds one root image for every platform, names no board and
   needs no kernel-install. Release format: `schemas/v2`.
-- **A distribution as a project** (done): `distro.toml` (`name`, `build`) names
+- **A distribution as a project** (done): `orchard.toml` (`name`, `[release] build`) names
   its build entry. In a distribution checkout `orchard build` runs it as
   `ENTRY --version VERSION --output out/releases/VERSION` (default version
   `dev-DATE-TIME`), checks the index, its distro and version and every file it
@@ -136,7 +133,7 @@ Done; `src/orchard/installer.py` and `src/orchard/user.py`.
   a launcher of the core with `install`, `launch`, `devices` and `update`. An
   installer writes it before installing (so `orchard launch` remains even if the
   install stops) and replaces it only with a newer core; a development orchard on
-  PATH (the mainline link of `./setup`) stays. `orchard update` installs the latest
+  PATH (the nightly launcher `./setup` installs) stays. `orchard update` installs the latest
   orchard release's `orchard-core.pyz` if it is newer. Later a self-contained Rust/C
   binary.
 - **State:** the store and the build cache record their layout version

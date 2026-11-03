@@ -1,0 +1,107 @@
+#!/bin/sh
+# orchard on PATH: runs the newest nightly of orchard.
+#
+# Every command looks up the newest nightly once (nightly/latest.json) and
+# runs a shallow clone of its tag in the Orchard cache (tooling/NAME), so it
+# runs one version from start to end and the next command picks up a newer
+# one. Offline: the newest nightly already in the cache. ORCHARD_VERSION=
+# nightly-YYYYMMDD-COMMIT or vX.Y.Z runs that version instead, e.g. to
+# reproduce a bug. To work on orchard itself, run a checkout's bin/orchard.
+#
+#   orchard update           install the newest nightly's launcher as this one
+#   orchard python ARGS      Python in the running version's environment
+set -eu
+
+cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
+url=${ORCHARD_MAINLINE_URL:-https://github.com/OrchardLinux/orchard.git}
+releases=${ORCHARD_RELEASES_URL:-https://github.com/OrchardLinux/orchard/releases/download}
+
+# A published version, cloned once at its tag.
+version() {
+    dir=$cache/tooling/$1
+    if [ ! -d "$dir/.git" ]; then
+        mkdir -p "$cache/tooling"
+        partial=$(mktemp -d "$cache/tooling/.$1.XXXXXX")
+        echo "orchard: fetching $1" >&2
+        if ! git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$1" "$url" "$partial/orchard" >&2; then
+            rm -rf "$partial"
+            echo "orchard: no orchard version $1" >&2
+            exit 1
+        fi
+        mv "$partial/orchard" "$dir" 2>/dev/null || [ -d "$dir/.git" ]  # another command was first
+        rm -rf "$partial"
+    fi
+    printf '%s\n' "$dir"
+}
+
+pick() {
+    if [ -n "${ORCHARD_VERSION:-}" ]; then
+        printf '%s' "$ORCHARD_VERSION" | grep -Eqx 'nightly-[0-9]{8}-[0-9a-f]{12}|v[0-9]+\.[0-9]+\.[0-9]+' || {
+            echo "orchard: ORCHARD_VERSION must be nightly-YYYYMMDD-COMMIT or vX.Y.Z" >&2
+            exit 1
+        }
+        version "$ORCHARD_VERSION"
+        return
+    fi
+    name=$(curl -fsSL --max-time 20 "$releases/nightly/latest.json" 2>/dev/null |
+        sed -n 's/.*"name": *"\(nightly-[0-9]\{8\}-[0-9a-f]\{12\}\)".*/\1/p')
+    if [ -n "$name" ]; then
+        version "$name"
+        return
+    fi
+    cached=$(ls -d "$cache"/tooling/nightly-* 2>/dev/null | sort | tail -n 1)
+    if [ -n "$cached" ]; then
+        echo "orchard: no network; the newest cached nightly, $(basename "$cached")" >&2
+        printf '%s\n' "$cached"
+        return
+    fi
+    echo "orchard: no nightly reachable ($releases/nightly/latest.json) and none cached;" >&2
+    echo "  connect once, or run an orchard checkout's bin/orchard" >&2
+    exit 1
+}
+
+# The launcher this is, through links.
+self=$0
+while [ -L "$self" ]; do
+    target=$(readlink "$self")
+    case $target in
+        /*) self=$target ;;
+        *) self=$(dirname "$self")/$target ;;
+    esac
+done
+
+# orchard = "PATH" in orchard.local.toml used to choose the checkout; it no longer does.
+top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if [ -f "$top/orchard.local.toml" ] && grep -Eq '^orchard[[:space:]]*=' "$top/orchard.local.toml"; then
+    echo "orchard: $top/orchard.local.toml names an orchard (orchard = ...); that is no longer read." >&2
+    echo "  Run a checkout's bin/orchard to use it, or set ORCHARD_VERSION to pin a version; then remove the line." >&2
+    exit 1
+fi
+
+command -v uv >/dev/null 2>&1 || {
+    echo 'orchard: install uv: https://docs.astral.sh/uv/getting-started/installation/' >&2
+    exit 1
+}
+root=$(pick)
+export UV_PROJECT_ENVIRONMENT="$root/.venv"
+case ${1:-} in
+    update)
+        # The orchard on PATH: a file, replacing the link an older setup made.
+        installed=${ORCHARD_LAUNCHER:-$HOME/.local/bin/orchard}
+        if [ -f "$root/tools/launcher" ] && { [ -L "$installed" ] || ! cmp -s "$installed" "$root/tools/launcher"; }; then
+            mkdir -p "$(dirname "$installed")"
+            partial=$(dirname "$installed")/.orchard-$$
+            cp "$root/tools/launcher" "$partial" && chmod 755 "$partial" && mv -f "$partial" "$installed"
+            echo "orchard: $installed is $(basename "$root")'s launcher now" >&2
+        else
+            echo "orchard runs $(basename "$root"); the launcher is up to date" >&2
+        fi
+        exit 0 ;;
+esac
+if [ -f "$root/tools/launcher" ] && ! cmp -s "$self" "$root/tools/launcher"; then
+    echo "orchard: a newer launcher is in $(basename "$root"); run orchard update" >&2
+fi
+case ${1:-} in
+    python) shift; exec uv run --quiet --project "$root" python "$@" ;;
+    *) exec uv run --quiet --project "$root" orchard "$@" ;;
+esac

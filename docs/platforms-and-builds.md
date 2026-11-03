@@ -58,7 +58,13 @@ queue on top of upstream, not a fork:
 - the delta is exportable as a plain series at any time.
 
 Configs live in the tree as defconfigs (`arch/<arch>/configs/`); orchard only
-names them. Until the switch, `kernel/configs` is authoritative.
+names them. Until the switch, `kernel/configs` is authoritative: regenerate
+makes the tree's defconfigs from it and checks they reproduce it byte for
+byte. **Done:** what differs from the source of truth is refused, never
+corrected silently. `export.py` carries a branch's defconfig change into
+`kernel/configs/<platform>/config` (`make olddefconfig`), so it reaches orchard
+the way any change does; regenerate refuses to move a branch whose
+defconfig holds a change orchard does not have, and says to export it.
 
 ## Imported work (done)
 
@@ -86,14 +92,25 @@ and Cascadia's NAND driver is read-only by construction.
 **Done:** `--kernel-tree PATH` builds a kernel tree of your own (a branch of
 OrchardLinux/linux) with its tree's defconfig instead of orchard's patched
 tree, cached apart from orchard's kernels (`kernel-tree-*`) and recorded in
-`build.json`. Kernel work happens on such a branch; `export.py` turns it into
+`build.json`. It builds inside the tree, in `.orchard-out/PLATFORM` (which
+orchard adds to the tree's `.git/info/exclude`): the build output lives and
+goes with its tree instead of piling up in orchard's cache. Kernel work happens on such a branch; `export.py` turns it into
 patch files at the end. It takes RAM payloads only, until distributions are
 projects like any other (below).
 
 ## Projects, producers and boot (planned)
 
+**Principles.** orchard is a tooling layer, not a distribution framework: it
+provides producers, platform data and a CLI that makes using them easy;
+projects compose them. Every fact and every step exists in one place; where
+a second copy exists for a while (`kernel/configs` and the tree's
+defconfigs), a check guards it and the source of truth wins, everything else
+is refused. Doing by hand what the CLI does is slower, never broken:
+producers check their own inputs and fail loudly, and no step depends on
+state only the CLI has.
+
 Agreed November 2026. It replaces the separate paths for RAM payloads
-(`payload.toml`) and distributions (`distro.toml`): today a distribution's
+(`payload.toml`) and distributions (`distro.toml`): before, a distribution's
 build entry calls orchard's internals itself (`platform.kernel()`,
 `prepare_shared()`, its own m1n1), so no orchard option (`--kernel-tree`, the
 platform, the m1n1) reaches it without its own wiring.
@@ -117,12 +134,20 @@ platform, the m1n1) reaches it without its own wiring.
    launcher. The commands for each are documented.
 
 So a user can build a project's root, take or build the platform's
-components, assemble and boot without orchard. The orchard CLI does what is
-tedious by hand: it resolves platform and device, reuses the cache, takes
-the kernel from a published build, a local build or `--kernel-tree`, runs
-the producers and the assembly, and boots. `--explain` prints the plain
-commands it would run, so the standalone path is documented by the tool and
-cannot drift from it.
+components, assemble and boot without orchard.
+
+**Composition stays with the project.** A distribution's release (root,
+per-platform recovery and platform layer, manifest, installer package) is
+assembled by the distribution's own script, which calls orchard's producers
+by path or takes their published outputs, and imports none of orchard's
+Python. The orchard CLI does not compose a second time: it resolves the
+inputs (platform and device; the kernel from a published build, a local
+build or `--kernel-tree`; the shared components), hands them to that script
+as files and arguments, caches, and boots. `--explain` records what ran
+(**done** for RAM payloads: `out/PLATFORM/commands.sh`), so the standalone
+path is documented by the tool and cannot drift from it. The two
+distributions' scripts stay short because the producers do the work;
+contract tests in orchard check how they call them.
 
 ### Two stages: initramfs and root
 
@@ -155,33 +180,27 @@ NFS.
 
 ### The project file
 
-One file for every project, say `orchard.toml`, replacing `payload.toml` and
-`distro.toml`. It declares what the project builds and never which board it
-is for; the kernel is the platform's, and a developer's choices (`platform`,
-`device`, `kernel-tree`) stay in arguments and `orchard.local.toml`.
+**Done:** one file for every project, `orchard.toml` (`orchard.project`),
+replacing `payload.toml` and `distro.toml`, which are still read with a
+notice to rename them. It declares what the project builds and never which
+board it is for; the kernel is the platform's, and a developer's choices
+(`platform`, `device`, `kernel-tree`) stay in arguments and
+`orchard.local.toml`.
 
 ```toml
-# A RAM example
-name = "minimal-boot"
-[root]
-init = "init"
-files = "rootfs"
-transport = false            # no USB session helper
+# A RAM example                  # A distribution
+name = "minimal-boot"            name = "minimal-linux"
+[payload]                        [release]
+transport = false                build = "tools/build.py"   # its own script composes the release
+                                 selects-platform = true
 ```
 
-```toml
-# A distribution
-name = "minimal-linux"
-[root]
-build = "tools/build-root"   # plain command: --output DIR --arch arm64
-format = "image"
-[initramfs]                  # optional: a stage 1 of its own
-[boot]
-splash = "boot/splash.png"   # data for orchard's m1n1
-cmdline = "quiet"
-[release]                    # optional: installable
-installer = true
-```
+In a distribution `orchard build` runs the script with `ORCHARD_CHECKOUT` (the
+snapshot whose producers it calls) and, with `--kernel-tree`,
+`ORCHARD_KERNEL_TREE`, which `orchard.inputs` builds the kernels from; it
+records that call as `out/releases/VERSION.commands.sh`, which `--explain`
+prints. The script's own steps are the distribution's
+([distribution-contract.md](distribution-contract.md)).
 
 ### Carried over
 
@@ -189,10 +208,12 @@ installer = true
   orchard's artifact. A distribution build takes it finished for its orchard
   revision and compiles it locally only on request (`--kernel-tree`).
 - A local test build covers one platform; releases cover all.
-- One m1n1, orchard's. A distribution supplies its splash as data: an
-  installed boot already reads it per entry from the boot partition; a RAM
-  boot gets it over the m1n1 proxy from the launcher (to verify: earlier
-  attempts at injecting it failed). Distribution m1n1 builds go away.
+- **Done:** one m1n1, orchard's. A distribution supplies its artwork as
+  data: the boot splash, which m1n1 paints per entry for an installed boot,
+  and m1n1's custom logo payload (`m1n1_logo_256128`, at most 256 px), which
+  the recovery's assembly puts directly after m1n1 (`assemble.py --logo`) and
+  the quiet m1n1 draws on black. minimal-linux and omarchy-a build no m1n1
+  any more (J71b, November 2026).
 - The A5 (`cascadia` loader) packs stage 1 into the zImage because iBEC
   passes no initrd. As its launcher is rebuilt from first principles, the
   aim is that it differs from arm64 only in having no m1n1; how far that
@@ -208,10 +229,13 @@ installer = true
 
 ### Order
 
-1. Assembly as a standalone script.
-2. `--explain`.
-3. minimal-linux as an `orchard.toml` project.
-4. omarchy-a.
+1. **Done:** assembly as a standalone script (`assemble.py`, by hand in
+   docs/ram-development.md), `--explain` for RAM payloads, one m1n1.
+2. Published components (nightlies), so a distribution build needs neither a
+   kernel compile nor the CLI.
+3. The orchard internals the distributions import become producers with file
+   contracts (`platform.kernel()`, `prepare_shared()`, `orchard.image.*`),
+   and the distributions call those; then `orchard.toml`.
 
 ## Build environment (planned)
 
@@ -240,12 +264,97 @@ to 10 CPUs and 16 GB by hand (November 2026). Instead:
 
 ## Updating orchard (done)
 
-`orchard` outside a checkout runs mainline (`~/.cache/orchard/orchard-main`).
-It used to fetch `main` before use when its last fetch was over ten minutes
-old, so any command, even `orchard --version`, could change the code and data
-a running build in another session reads. Mainline now changes only with
-`orchard update`; a checkout of your own (or one `orchard.local.toml` names)
-is yours to update with git. A fix for a running build means restarting it.
+`orchard` used to run a hidden mainline clone that fetched `main` before
+use, so any command could change the code a running build in another session
+reads. Now the `orchard` on PATH runs one nightly from start to end (see
+"Nightlies"), and a checkout's `bin/orchard` runs that checkout, which is
+yours to update with git. A fix for a running build means restarting it.
+
+## Nightlies
+
+**Done (CI):** a scheduled run (03:17 UTC) builds every published component
+of orchard main when main moved since the last nightly, or on dispatch with
+`nightly: true`. Every nightly is its own immutable pre-release,
+`nightly-YYYYMMDD-COMMIT`, with the same assets as a release (the tooling as
+`orchard-source.tar.gz`, per arm64 platform a component bundle, m1n1, Pongo,
+tools, `component-keys.json`, `SHA256SUMS`, attestation) plus `nightly.json`. The
+release `nightly` only points at the newest (`latest.json`); nightlies older
+than 14 days go, the newest always stays. GitHub's latest release, which
+`orchard update` and the installer read, never points at a pre-release.
+Distribution CI takes one with `HARDWARE_TAG=nightly` (resolved once through
+the pointer) or `HARDWARE_TAG=nightly-YYYYMMDD-COMMIT`. apple-armv7 is not in
+it: it shares no patch layer with the arm64 platforms, so a nightly would
+only rebuild the same kernel.
+
+**Planned: orchard as versioned tooling** (agreed November 2026, after
+Flutter's SDK and channels). The hidden mainline clone (`orchard-main`) is
+gone (November 2026).
+
+- Channels: **nightly** for developers, **stable** (releases vX.Y.Z) for
+  installing. A stable distribution release pins, and for now bundles, a
+  stable orchard release; until one exists, distribution releases are
+  previews on a nightly.
+- **Done, first part:** the `orchard` on PATH (`tools/launcher`) runs the
+  newest nightly (looked up per command through `latest.json`, a shallow
+  clone of its tag in `tooling/NAME`), offline the newest cached one, and
+  says so when neither exists; `ORCHARD_VERSION` pins one. Nothing looks at
+  the current directory: a checkout's `bin/orchard` runs that checkout. Its
+  kernels, m1n1 and tools then come from that nightly (same files, same
+  source keys) and its Pongo too (`git describe` finds the nightly's tag).
+  `orchard update` installs the newest nightly's launcher, and a launcher
+  older than the nightly it runs says so.
+  The user core an installer leaves (install, launch, devices) stays on
+  stable releases; the two meet in the Rust launcher.
+- The installed CLI is thin, like `bin/flutter`: in a project checkout
+  (`git clone omarchy-a && cd omarchy-a && orchard run`) it resolves the
+  newest nightly once at the start of the build, fetches its tooling
+  (`orchard-source.tar.gz`) and the components the build needs into the cache
+  per nightly, runs that tooling, and records the nightly in the release.
+  The project builds only its own parts; nothing of orchard is compiled. A
+  nightly published meanwhile counts from the next build on, so nothing
+  changes under a running build. Offline, the newest cached nightly, said so.
+- Pinning stays: `ORCHARD_VERSION` names a nightly or a release, a
+  checkout's `bin/orchard` runs that checkout, and `--kernel-tree` a kernel
+  tree; a checkout of your own compiles, or takes a published component
+  whose source key matches.
+  `--kernel-tree` stays a path: a branch without a clone of one's own is
+  `git clone --depth 1 -b BRANCH https://github.com/OrchardLinux/linux`.
+- **Later, for testers:** a pull request's or branch's kernel built by CI
+  like a nightly's and taken finished (`orchard run --kernel pr:N` or its
+  artifact), so testing a kernel change needs no compile at all.
+
+**Planned, at the switch** (trees authoritative): a nightly is a tuple of
+commits, recorded in `nightly.json`: orchard (descriptors, device data,
+producers, tools), OrchardLinux/linux per platform branch, OrchardLinux/m1n1
+main, the Pongo pin.
+
+- The kernel job clones OrchardLinux/linux at the descriptor's branch and
+  runs `kernel/build PLATFORM --kernel-tree DIR`, the path that gives a
+  kernel byte for byte identical to the series build today; m1n1 likewise
+  from its tree.
+- A nightly runs when any of those repositories moved since the last one.
+- A platform is rebuilt only when its inputs moved (its branch, its config,
+  the shared toolchain and build scripts); otherwise the last nightly's
+  bundle is reused. apple-armv7 then joins and rebuilds only when its branch
+  or the shared files move.
+- **Nightlies follow the branch heads; releases pin them** (decided November
+  2026): at tag time orchard writes the commit tuple into a lock, as
+  `upstream.lock` pins the base today, so a release rebuilds exactly. A
+  kernel change needs no second commit in orchard to reach the nightly.
+
+**Done:** a distribution build takes the nightly's kernel instead of
+compiling it when the platform's *source key* matches (`orchard.published`):
+a hash of the files that decide the kernel (upstream lock, series and every
+patch, config, toolchain recipes, build fields, `KERNEL_PRODUCER`), which any
+checkout computes without a kernel tree. CI publishes the keys
+(`component-keys.json`, in `SHA256SUMS`); the bundle is checked against
+`SHA256SUMS` before use and cached (`kernel-published-PLATFORM`). Another
+key, no network or `ORCHARD_KERNEL=local`: it compiles as before. Builds in
+an orchard checkout (kernel work) always compile their kernel; their static
+tools come from the nightly when the tool recipes match (orchard#58), and
+`ORCHARD_PUBLISHED=off` builds everything locally. The published kernel is
+CI's build of that kernel state; CI installs the toolchain natively, so it
+is not claimed to be byte-identical to a local compile.
 
 ## Build caching (planned, last)
 
@@ -305,3 +414,31 @@ into drivers.
   minimal-linux additionally builds armv7 (Alpine, also Cascadia's base) as
   the root for platforms without an arm64 root; an armv7 Omarchy (Arch Linux
   ARM `armv7h`, software rendering) stays a separate, later track.
+
+## Later
+
+Ideas carried over from an earlier architecture plan (October 2026), not yet
+designed in detail:
+
+- **Deploy as an update to a running system.** `orchard deploy` to an iPad
+  already running Linux, without DFU or recovery: transfer only what
+  changed, stage a new system generation beside the active one, keep
+  device-local firmware, identity and user data, switch the boot selection
+  only after staging and verification, and keep the previous generation for
+  rollback. Transfer, activation and reboot stay separate steps. A
+  non-transactional `--live` mode for desktop iteration updates a bounded set
+  of owned files and restarts services, in seconds. Today there are only
+  `orchard push/pull/exec` for RAM sessions and a full install.
+- **Capability levels instead of one install flag.** A board is observed,
+  bootable, storage-capable, installable or desktop-qualified, and what
+  orchard permits (installing above all) follows what has been demonstrated;
+  today `device.toml` has `install = true/false` plus features and caveats.
+  Unknown hardware gets bounded observation, never a speculative install.
+- **The simulator as a target of the same workflow** (`--target simulator`):
+  the same userspace and packaging as the devices with a VM kernel and
+  virtual peripherals, so contributors without Apple hardware can work on
+  the desktop and on update logic. It does not validate drivers, touch,
+  charging or suspend.
+- **The recovery not sealed to one root.** A distribution's recovery is
+  still built against its root's exact receipt (`--root-receipt`), so every
+  root update rebuilds it.

@@ -43,6 +43,9 @@ add an automatic version suffix. The build script supplies the release suffix.
 - `CONFIG_SPI_APPLE=y` and `CONFIG_COMMON_CLK_APPLE_T8010_TOUCH=y`: built-in
   support needed by the touch transport.
 - `CONFIG_APPLE_SIO=m` and `CONFIG_APPLE_SIO_DMA=m`: loadable SmartIO support.
+- `CONFIG_UDMABUF=y`: `/dev/udmabuf`, through which the compositor hands
+  clients' shared-memory buffers to the GPU instead of copying them (omarchy-a's
+  wlroots). It is a bool, so it cannot be a module.
 - `CONFIG_TOUCHSCREEN_APPLE_Z2` is disabled: the current touchscreen runtime
   driver is supplied separately as `j71b_z2.ko`.
 

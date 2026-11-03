@@ -43,7 +43,7 @@ orchard run --yes                  # without a prompt
 
 A payload carries every DTB of its platform, so one build boots each of its described boards; a board not yet described gets a warning first. Once your board has its `devices/BOARD/device.toml`, `orchard run` recognizes it.
 
-To keep your own experiment, copy an example anywhere (`cp -r examples/minimal-boot ~/board-tests`); with an `orchard.local.toml` naming this worktree (`orchard = "/path/to/orchard-BOARD"`), `orchard run` there uses it.
+To keep your own experiment, copy an example anywhere (`cp -r examples/minimal-boot ~/board-tests`); run it with this worktree's launcher (`/path/to/orchard-BOARD/bin/orchard run`) to use the worktree.
 
 The reference kernel/DTB is a starting experiment, not a guarantee it fits your board.
 

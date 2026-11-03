@@ -23,7 +23,7 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='show internal device events')
     commands = parser.add_subparsers(dest='action', required=True)
     build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload '
-                                'for every board of one platform; in a distribution checkout (distro.toml), its release')
+                                'for every board of one platform; in a distribution checkout (orchard.toml [release]), its release')
     run = commands.add_parser('run', help='build what is missing for the attached board, then boot it; in a '
                               "distribution checkout, its release's recovery, without installing")
     for command, what in ((build, 'a payload directory (init, optional rootfs/) or a distribution checkout'),
@@ -106,18 +106,18 @@ def main():
         from orchard.sources import cache_root as build_cache
         check_state()
         check_state(build_cache())
+        if args.action == 'build' or (args.action == 'run' and not args.no_build):
+            from orchard.cache import check_free
+            check_free(build_cache(), args.directory)
         if args.action in ('build', 'run'):
             from orchard import distro
             root = distro.find(args.directory)
-            payload_only = [name for name in ('hardware', 'cache', 'kernel_dir', 'kernel_tree',
+            payload_only = [name for name in ('hardware', 'cache', 'kernel_dir',
                                               'pongo', 'busybox', 'loader') if getattr(args, name) is not None]
             if root is not None:
-                if getattr(args, 'explain', False):
-                    raise ValueError('--explain is for RAM payloads until distributions build as projects '
-                                     '(docs/platforms-and-builds.md)')
                 if payload_only:
                     raise ValueError(f'--{payload_only[0].replace("_", "-")} is for RAM payloads; '
-                                     f'{root} is a distribution checkout (distro.toml)')
+                                     f'{root} is a distribution checkout (orchard.toml [release])')
                 if args.action == 'run' and (args.platform or args.device):
                     raise ValueError('orchard run boots the attached board: it takes no --platform or --device')
                 if args.action == 'build':
@@ -130,17 +130,28 @@ def main():
                     elif args.platform or args.device:
                         raise ValueError(f'{root.name}\'s build entry builds every platform and takes no '
                                          '--platform or --device; update the distribution '
-                                         '(distro.toml selects-platform = true)')
-                    distro.build(root, version=args.version, platforms=platforms)
+                                         '(orchard.toml [release] selects-platform = true)')
+                    from orchard.build import resolve_kernel_tree
+                    index = distro.build(root, version=args.version, platforms=platforms,
+                                         kernel_tree=resolve_kernel_tree(root, args.kernel_tree))
+                    commands = index.parent.parent / f'{index.parent.name}.commands.sh'
+                    if args.explain:
+                        print(commands.read_text(), end='')
+                    else:
+                        print(f'What it ran, as a plain command: {commands} (or orchard build --explain)')
                 else:
                     if args.no_build and args.version:
                         raise ValueError('--no-build boots the last build; leave out --version')
+                    if args.no_build and args.kernel_tree:
+                        raise ValueError('--no-build boots the last build; leave out --kernel-tree')
+                    from orchard.build import resolve_kernel_tree
                     result = distro.run(root, build_first=not args.no_build, version=args.version,
-                                        yes=args.yes, progress=progress)
+                                        yes=args.yes, progress=progress,
+                                        kernel_tree=resolve_kernel_tree(root, args.kernel_tree))
                     print(json.dumps(result, indent=2))
                 return
             if args.version is not None:
-                raise ValueError('--version is for distribution checkouts (distro.toml)')
+                raise ValueError('--version is for distribution checkouts (orchard.toml [release])')
         platform = None
         if args.action in ('build', 'run') and args.platform:
             if len(args.platform) > 1 or 'all' in args.platform:

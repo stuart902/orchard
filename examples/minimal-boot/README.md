@@ -21,7 +21,7 @@ The payload serves every board of that board's platform; see the
 
 To add a program, put an executable at `rootfs/usr/bin/my-tool`. To change startup,
 edit `init`. There is no Orchard device agent, RPC protocol, installer, network
-service or storage mount. Kernel modules are omitted unless `payload.toml` says
+service or storage mount. Kernel modules are omitted unless `orchard.toml` says
 `modules = true`; that stages matching modules but does not activate them.
 
 The CLI handles compilation, caching, packing and uploading directly.
@@ -39,7 +39,7 @@ runtime is only offline-tested so far.
 
 ## Serial access
 
-This example's [`payload.toml`](payload.toml) sets `transport = false`: serial only,
+This example's [`orchard.toml`](orchard.toml) sets `transport = false`: serial only,
 no USB network or SSH (`orchard shell`). `orchard push/pull --serial` still work.
 
 After `Boot this device? [Y/n]`, connect to the actual new USB serial port:

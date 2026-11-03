@@ -12,6 +12,11 @@ reproduce kernel/configs byte for byte, and moves the branch. m1n1 has one
 series, which becomes its main. Everything is read from ORCHARD_COMMIT
 (default: HEAD of this checkout), not from the working tree. Nothing is
 pushed.
+
+orchard is the source of truth until the switch, so a branch is only moved
+from where regenerate last left it (refs/orchard/generated/BRANCH): a branch
+with commits of its own, a defconfig edit included, is refused until they
+are exported to orchard (export.py), never overwritten.
 """
 import argparse
 import collections
@@ -88,6 +93,16 @@ try:
             print(f'{branch}: fetching {base["commit"][:12]} from {base["url"]}')
             git(args.linux, 'fetch', '-q', '--depth=1', base['url'], base['commit'])
         print(f'== {branch}: {", ".join(names)} on {base["commit"][:12]}')
+        # Only from where regenerate left it: anything else on the branch is not in orchard yet.
+        generated = subprocess.run(['git', '-C', args.linux, 'rev-parse', '-q', '--verify',
+                                    f'refs/orchard/generated/{branch}'], capture_output=True, text=True).stdout.strip()
+        tip = subprocess.run(['git', '-C', args.linux, 'rev-parse', '-q', '--verify', f'refs/heads/{branch}'],
+                             capture_output=True, text=True).stdout.strip()
+        if generated and tip and tip != generated:
+            own = git(args.linux, 'rev-list', '--count', f'{generated}..{tip}')
+            sys.exit(f'linux {branch} has {own} commit(s) regenerate did not make, since {generated[:12]}; '
+                     'export them to orchard first (tools/kernel-tree/export.py), or reset the branch to '
+                     f'refs/orchard/generated/{branch} to drop them')
         subprocess.run([sys.executable, '-I', HERE / 'convert.py', '--orchard', ORCHARD,
                         '--commit', commit, '--layers', 'kernel',
                         '--series', Path(first['series']).relative_to('kernel'),
@@ -166,9 +181,17 @@ try:
             git(args.linux, 'reset', '-q', '--hard', merged)
         else:
             git(args.linux, 'update-ref', f'refs/heads/{branch}', merged)
+        git(args.linux, 'update-ref', f'refs/orchard/generated/{branch}', merged)
         print(f'linux {branch} {merged[:12]} tree {git(args.linux, "rev-parse", merged + "^{tree}")[:12]}')
 
     # m1n1: one series, one main.
+    generated = subprocess.run(['git', '-C', args.m1n1, 'rev-parse', '-q', '--verify', 'refs/orchard/generated/main'],
+                               capture_output=True, text=True).stdout.strip()
+    tip = subprocess.run(['git', '-C', args.m1n1, 'rev-parse', '-q', '--verify', 'refs/heads/main'],
+                         capture_output=True, text=True).stdout.strip()
+    if generated and tip and tip != generated:
+        sys.exit(f'm1n1 main has {git(args.m1n1, "rev-list", "--count", f"{generated}..{tip}")} commit(s) regenerate '
+                 'did not make; export them to orchard first, or reset main to refs/orchard/generated/main')
     m1n1_base = dict(l.split('=', 1) for l in git(ORCHARD, 'show', f'{commit}:boot/m1n1/upstream.lock')
                      .splitlines() if '=' in l)['commit']
     subprocess.run([sys.executable, '-I', HERE / 'convert.py', '--orchard', ORCHARD, '--commit', commit,
@@ -183,6 +206,7 @@ try:
         git(args.m1n1, 'reset', '-q', '--hard', converted)
     else:
         git(args.m1n1, 'update-ref', 'refs/heads/main', converted)
+    git(args.m1n1, 'update-ref', 'refs/orchard/generated/main', converted)
     print(f'm1n1 main {converted[:12]}')
 finally:
     import shutil

@@ -51,12 +51,22 @@ class DeveloperKernelTree(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not a git checkout'):
             kernel.check_tree(ROOT, BOARD, bare)
 
-    def test_every_tree_gets_its_own_build_directory(self):
+    def test_a_tree_builds_inside_itself_and_its_git_ignores_that(self):
         other = self.make_tree('linux-gpu')
         one = kernel.work_directory(ROOT, BOARD, self.tree)
+        self.assertEqual(one, self.tree.resolve() / '.orchard-out/apple-armv7')
         self.assertNotEqual(one, kernel.work_directory(ROOT, BOARD, other))
         self.assertNotEqual(one, kernel.work_directory(ROOT, BOARD))
-        self.assertTrue(one.name.startswith('tree-apple-armv7-'))
+        kernel.check_tree(ROOT, BOARD, self.tree)
+        kernel.check_tree(ROOT, BOARD, self.tree)  # once in the exclude file, not twice
+        exclude = (self.tree / '.git/info/exclude').read_text()
+        self.assertEqual(exclude.splitlines().count('/.orchard-out/'), 1)
+        before = self.key()
+        (one / 'output').mkdir(parents=True)
+        (one / 'output/vmlinux').write_text('build output')
+        self.assertEqual(self.key(), before)  # the output is no part of the tree's content
+        status = subprocess.run(['git', '-C', str(self.tree), 'status', '--porcelain'], capture_output=True, text=True)
+        self.assertNotIn('.orchard-out', status.stdout)
 
     def test_the_key_follows_the_trees_content_not_orchards_config(self):
         before = self.key()

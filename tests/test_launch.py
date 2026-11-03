@@ -112,6 +112,12 @@ class LaunchFlow(unittest.TestCase):
         report, _ = self.run_launch(disk, answers=())
         self.assertEqual(report['entry']['title'], 'Omarchy')
 
+    def test_the_only_bootable_system_starts_without_a_question(self):
+        # A stale entry for another board (or a root that is gone) leaves nothing to choose.
+        disk = image({'a.conf': entry('Other', '6.18.2', devicetree='t8010-j171.dtb'), 'b.conf': entry('Omarchy', '6.18.2')})
+        report, _ = self.run_launch(disk, answers=())
+        self.assertEqual(report['entry']['title'], 'Omarchy')
+
     def test_entry_option_skips_the_question(self):
         disk = image({'omarchy.conf': entry('Omarchy', '6.18.2'), 'minimal.conf': entry('Minimal', '6.18.2')})
         report, _ = self.run_launch(disk, answers=(), entry_id='minimal')

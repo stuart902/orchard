@@ -59,15 +59,31 @@ def work_directory(hardware, device, tree=None):
     Current hardware shares one tree per platform and upstream pin between all
     checkouts, in the Orchard cache; older hardware keeps it in the checkout.
     Never move or reset it: it holds editable source and compiler output. A
-    developer's kernel tree (TREE) gets a build directory of its own.
+    developer's kernel tree (TREE) builds inside itself, TREE/.orchard-out/
+    PLATFORM, which git ignores there: its output lives and goes with the tree.
     """
     platform = layout(hardware, device)[0]
     if tree is not None:
-        digest = hashlib.sha256(str(Path(tree).resolve()).encode()).hexdigest()[:12]
-        return sources.cache_root() / 'kernel-work' / f'tree-{platform}-{digest}'
+        return Path(tree).resolve() / OUT / platform
     if shared_tree(hardware):
         return sources.cache_root() / 'kernel-work' / f"{platform}-{pin(hardware, device)['commit'][:12]}"
     return Path(hardware) / 'kernel/.work' / platform
+
+
+OUT = '.orchard-out'  # a developer kernel tree's build output, inside the tree
+
+
+def ignore_output(tree):
+    """Make the tree's git ignore OUT (its info/exclude), so builds never show in status or in its key."""
+    exclude = Path(os.fsdecode(subprocess.check_output(['git', '-C', str(tree), 'rev-parse', '--git-path',
+                                                        'info/exclude']).strip()))
+    if not exclude.is_absolute():
+        exclude = Path(tree) / exclude
+    line = f'/{OUT}/'
+    text = exclude.read_text() if exclude.is_file() else ''
+    if line not in text.splitlines():
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text(text + ('' if text.endswith('\n') or not text else '\n') + line + '\n')
 
 
 def check_tree(hardware, device, tree):
@@ -80,6 +96,7 @@ def check_tree(hardware, device, tree):
                          f'{described["defconfig"]} (the {described["platform"]} defconfig)')
     if subprocess.run(['git', '-C', str(tree), 'rev-parse', '--git-dir'], capture_output=True).returncode:
         raise ValueError(f'{tree} is not a git checkout; orchard identifies a kernel tree by its content')
+    ignore_output(tree)
     return tree
 
 

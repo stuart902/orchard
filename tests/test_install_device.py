@@ -68,6 +68,19 @@ class PlatformLayer(unittest.TestCase):
         self.assertEqual(D.kernel_version(self.root), '6.18-orchard')
         self.assertEqual((self.root / 'usr/share/alsa/ucm2/Orchard/j71b/HiFi.conf').read_bytes(), b'ucm')
 
+    def test_executables_keep_their_exec_bit_and_nothing_more(self):
+        path = self.work / 'layer.tar.gz'
+        expanded, _ = platform.write({'usr/lib/orchard/orchard-sleep': (b'#!/bin/sh\n', 0o755),
+                                      'usr/lib/systemd/system/orchard-sleep.service': (b'[Unit]\n', 0o644),
+                                      'usr/lib/orchard/setuid': (b'x', 0o4755)}, path)
+        data = path.read_bytes()
+        D.install_layer(path, self.root, size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                        expanded_limit=expanded)
+        mode = lambda name: (self.root / name).stat().st_mode & 0o7777
+        self.assertEqual(mode('usr/lib/orchard/orchard-sleep'), 0o755)
+        self.assertEqual(mode('usr/lib/systemd/system/orchard-sleep.service'), 0o644)
+        self.assertEqual(mode('usr/lib/orchard/setuid'), 0o755)
+
     def test_a_file_the_root_image_already_has_is_refused(self):
         path, receipt = self.layer({'usr/lib/firmware/brcm.bin': b'other'})
         with self.assertRaisesRegex(D.InstallError, 'already has /usr/lib/firmware/brcm.bin'):
@@ -115,8 +128,14 @@ class BootEntry(unittest.TestCase):
             other.write_text('linux /shared/linux\noptions root=PARTUUID=other\n')
             (boot / 'shared').mkdir()
             (boot / 'shared/linux').write_bytes(b'k')
-            self.assertEqual(D.remove_old_entries(boot, partuuid), ['omarchy-4d6c1a2b-7.3-orchard.conf'])
+            elsewhere = boot / 'loader/entries/by-label.conf'
+            elsewhere.write_text('linux /shared/linux\noptions root=LABEL=other\n')
+            self.assertEqual(D.remove_old_entries(boot, {'OTHER'}), ['omarchy-4d6c1a2b-7.3-orchard.conf'])
             self.assertFalse((boot / 'omarchy-4d6c1a2b').exists())
+            self.assertTrue((boot / 'shared/linux').exists())
+            # An entry an earlier install left for a root that is gone goes too; one named another way stays.
+            self.assertEqual(D.remove_old_entries(boot, {'new-root'}), ['other.conf'])
+            self.assertTrue(elsewhere.exists())
             self.assertTrue((boot / 'shared/linux').exists())
             (source / 'initrd').unlink()
             with self.assertRaisesRegex(D.InstallError, 'lacks /usr/lib/modules/7.3-orchard/initrd'):

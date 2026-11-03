@@ -453,15 +453,23 @@ def write_text(path, text):
     path.write_text(text)
 
 
-def remove_old_entries(boot_root, partuuid):
-    """The entries of a replaced root, and the files only they name."""
+def remove_old_entries(boot_root, present):
+    """Entries whose root is no partition on this disk any more, and the files only they name.
+
+    PRESENT: the PARTUUIDs on the disk after this install. That removes the
+    replaced root's entries and those an earlier install left behind for a
+    root that is gone (m1n1 lists them as not bootable). Entries that name
+    their root another way are kept.
+    """
+    present = {value.lower() for value in present}
     entries = boot_root / 'loader/entries'
     removed, files, kept = [], set(), set()
     for entry in sorted(entries.glob('*.conf')) if entries.is_dir() else []:
         text = entry.read_text(errors='replace')
         named = {line.strip().partition(' ')[2].strip().lstrip('/') for line in text.splitlines()
                  if line.strip().partition(' ')[0] in ('linux', 'initrd', 'devicetree')}
-        if f'root=PARTUUID={partuuid}' in text:
+        root = re.search(r'\broot=PARTUUID=(\S+)', text)
+        if root and root.group(1).lower() not in present:
             entry.unlink()
             removed.append(entry.name)
             files |= named
@@ -579,7 +587,8 @@ def install_layer(path, root, *, size, sha256, expanded_limit):
                     with os.fdopen(fd, 'wb') as output:
                         output.write(archive.extractfile(member).read())
                         os.fchown(output.fileno(), 0, 0)
-                        os.fchmod(output.fileno(), 0o644)
+                        # Scripts and generators stay executable; nothing else, never setuid.
+                        os.fchmod(output.fileno(), 0o755 if member.mode & 0o111 else 0o644)
                     count += 1
                 finally:
                     os.close(parent)
@@ -780,9 +789,11 @@ def install(plan, stream):
         boot_mount.mkdir(exist_ok=True)
         run('mount', '-t', 'vfat', boot_node, str(boot_mount))
         mounts.append(boot_mount)
-        if plan.get('remove'):
-            gone = remove_old_entries(boot_mount, plan['remove']['partuuid'])
-            emit('step', step='remove-old-entries', state='done', entries=gone)
+        replaced = (plan.get('remove') or {}).get('partuuid')
+        present = {p['partuuid'] for p in partitions if p['partuuid'] != replaced}
+        present |= {plan['root']['partuuid'], plan['boot']['partuuid']}
+        gone = remove_old_entries(boot_mount, present)
+        emit('step', step='remove-old-entries', state='done', entries=gone)
         entry = plan['entry']
         write_text(TARGET / 'etc/fstab',
                    f'PARTUUID={plan["root"]["partuuid"]} / ext4 rw,relatime 0 1\n'

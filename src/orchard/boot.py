@@ -87,7 +87,7 @@ def run_directory(directory, *, yes=False, build=True, device=None, platform=Non
     """Build what is missing or outdated for the attached board, then boot it once.
 
     The attached board picks the platform (--device or --platform choose one
-    for a board no hardware support describes yet). With payload.toml
+    for a board no hardware support describes yet). With orchard.toml
     firmware = true, that board's firmware is added as its own layer.
     Never retries a boot request.
     """

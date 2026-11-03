@@ -1,0 +1,14 @@
+#!/bin/sh
+# The DFU bell: ring once when a person has to do something physical (put a
+# device into DFU, replug it, unlock it). Plays ring.mp3 beside this script (six seconds), else the terminal bell.
+sound=$(dirname "$0")/ring.mp3
+# Detach playback and close inherited streams so callers can return immediately.
+if command -v afplay >/dev/null 2>&1; then
+    nohup afplay "$sound" </dev/null >/dev/null 2>&1 &
+elif command -v paplay >/dev/null 2>&1; then
+    nohup paplay "$sound" </dev/null >/dev/null 2>&1 &
+elif command -v ffplay >/dev/null 2>&1; then
+    nohup ffplay -nodisp -autoexit -loglevel quiet "$sound" </dev/null >/dev/null 2>&1 &
+else
+    printf '\a'
+fi

@@ -39,6 +39,8 @@ entry. The iPad 6 gets speakers and an accelerometer for screen rotation.
 
 - Add experimental PMIC power-off handling for iPad (6th generation, Wi-Fi;
   iPad7,5 / J71b).
+- iPhone X (GSM, d221): internal storage through the Apple ANS2 NVMe driver
+  (`CONFIG_NVME_APPLE`), read-only so far. (Eduardo Martins)
 - iPad 6 (J71b): speakers through the MCA audio path, with an ALSA UCM
   profile. (Dalton Alexandre)
 - iPad 5: UCM profile for the speakers and internal microphone.
@@ -48,6 +50,19 @@ entry. The iPad 6 gets speakers and an accelerometer for screen rotation.
   Alexandre's AOP work.
 - A10 (T8010): shared IOP mailbox for the GPU and AOP drivers; the NCO clock's
   boot rate is described per board.
+- iPad 6 (J71b): suspends and wakes with the Power button. A battery-gauge
+  poll that rebooted every HDQ-gauge iPad in sleep is fixed; the other A10
+  boards carry the same support, untested.
+- Installed systems allow suspend only on boards whose device data says it
+  works (`orchard-sleep` in the platform layer); distributions decide when to
+  suspend. How to bring it up on another board: docs/bring-up/suspend.md.
+
+### Development
+
+- RAM payloads built in an orchard checkout take the static tools (busybox,
+  dropbear, Wi-Fi tools) from the newest nightly when their recipe matches,
+  checked against its SHA256SUMS, instead of compiling them;
+  `ORCHARD_PUBLISHED=off` builds them locally. (thisiscamk)
 
 ### Contributing
 

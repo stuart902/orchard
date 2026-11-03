@@ -33,27 +33,28 @@ recipe = "firmware.json" # Relative to this device.toml; public recipe, not firm
 install = true
 status = "experimental"
 caveats = [
-  "Bluetooth needs its module vendor (Murata or USI) chosen per unit; not loaded yet.",
-  "Wi-Fi and SmartIO firmware come from iPadOS 17.7, not the 18.x build tested so far; not yet checked on hardware.",
+  "Bluetooth needs its module vendor (Murata or USI) chosen per unit; it works once the matching patch file is selected by hand (#49).",
+  "Wi-Fi and SmartIO firmware come from iPadOS 17.7, not the 18.x build tested so far; Wi-Fi works with it on hardware (#35), SmartIO is not checked.",
   "Charging is limited to 500 mA from any source until source identification and unplug withdrawal exist (README.md).",
 ]
-wifi = false # DT board-type is apple,rudderb but Apple's J171 ADT says module-instance "ruddera"; unvalidated.
+wifi = true # Connects with the 17.7 firmware on a J171 (#35). DT board-type is apple,rudderb, the ADT says "ruddera".
 usb_serial = false # No Orchard launcher/gadget validated on this board yet.
 usb_network = false
 
 # States: working, partial, untested, missing, none (features.toml).
+# Measured on one J171 with Omarchy A 0.2.0 installed (#35); buttons on the 0.1.11 build.
 [features]
-display = "untested"
-touch = "untested"
-wifi = "untested"
-bluetooth = "missing"
-storage = "untested"
-battery = "untested"
-charging = "untested"
-backlight = "untested"
-buttons = "untested"
+display = "working"
+touch = "working"
+wifi = "working"
+bluetooth = "partial"
+storage = "working"
+battery = "working"
+charging = "partial"
+backlight = "working"
+buttons = "working"
 audio = "missing"
 camera = "missing"
 cellular = "none"
-suspend = "missing"
+suspend = "untested"
 gpu = "missing"
