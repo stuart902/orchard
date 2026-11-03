@@ -63,22 +63,11 @@ jobs:
           done
           test "$(fdtget "$dtb" /sound simple-audio-card,name)" = 'J71b Speakers'
           cp "$dtb" out/
-      - name: Stage and verify capture userspace without accessing a device
-        run: python3 ci/stage-capture-userspace.py
-      - name: Download corresponding userspace sources
-        run: |
-          printf '%s\n' 'deb-src http://deb.debian.org/debian bookworm main' 'deb-src http://deb.debian.org/debian-security bookworm-security main' > /etc/apt/sources.list.d/capture-source.list
-          apt-get update
-          mkdir -p out/capture-sources
-          cd out/capture-sources
-          while read -r source; do apt-get source --download-only "$source"; done < ../capture-source-packages.txt
       - name: Archive components, corresponding source and provenance
         run: |
           dpkg-query -W > out/toolchain-packages.lock
           tar -C out -czf out/kernel-components-apple-16k.tar.gz components
           tar -C linux-draft --exclude=.git --exclude=.orchard-out -czf out/kernel-source-apple-16k.tar.gz .
-          tar -C out/capture-root -czf out/capture-userspace.tar.gz .
-          tar -C out/capture-sources -czf out/capture-userspace-source.tar.gz .
           (cd out && sha256sum *.tar.gz *.txt kernel.config toolchain-packages.lock *.dtb > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
@@ -89,6 +78,41 @@ jobs:
             out/*.lock
             out/*.dtb
             out/kernel.config
+            out/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+  userspace:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 alsa-utils libc6
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Stage and smoke-test licensed capture userspace
+        run: python3 ci/stage-capture-userspace.py
+      - name: Fetch exact corresponding sources
+        run: |
+          printf '%s\n' 'deb-src http://deb.debian.org/debian bookworm main' 'deb-src http://deb.debian.org/debian-security bookworm-security main' > /etc/apt/sources.list.d/capture-source.list
+          apt-get update
+          mkdir -p out/capture-sources
+          (cd out/capture-sources; while read -r source; do apt-get source --download-only "$source"; done < ../capture-source-packages.txt)
+      - name: Archive userspace separately from the kernel
+        run: |
+          tar -C out/capture-root -czf out/capture-userspace.tar.gz .
+          tar -C out/capture-sources -czf out/capture-userspace-source.tar.gz .
+          (cd out && sha256sum *.tar.gz *.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-capture-userspace
+          path: |
+            out/*.tar.gz
+            out/*.txt
             out/SHA256SUMS
           compression-level: 0
           if-no-files-found: error
