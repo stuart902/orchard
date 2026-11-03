@@ -23,12 +23,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: c40e165367f58182881c461cdbabdc0d1ff57e18
+          ref: e1edc8f07f18629f426d9cad9509e5d46999d9c0
           path: linux-draft
           persist-credentials: false
       - name: Verify exact experimental source
         run: |
-          test "$(git -C linux-draft rev-parse HEAD)" = c40e165367f58182881c461cdbabdc0d1ff57e18
+          test "$(git -C linux-draft rev-parse HEAD)" = e1edc8f07f18629f426d9cad9509e5d46999d9c0
           test -z "$(git -C linux-draft status --porcelain)"
           mkdir -p out
           git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
@@ -62,6 +62,22 @@ jobs:
             test "$(fdtget "$dtb" "$node" status)" = okay
           done
           test "$(fdtget "$dtb" /sound simple-audio-card,name)" = 'J71b Speakers'
+          python3 - "$dtb" <<'PYTEST'
+          import re, subprocess, sys
+          from pathlib import Path
+          dtb = sys.argv[1]
+          def cells(node, prop):
+              return [int(v, 16) for v in subprocess.check_output(['fdtget', '-t', 'x', dtb, node, prop], text=True).split()]
+          phandle, endpoint = cells('/soc/pdm@20a0b4000', 'dmas')
+          assert phandle == cells('/soc/dma-controller@20ae00000', 'phandle')[0]
+          assert endpoint == 0x5b
+          source = Path('linux-draft/drivers/soc/apple/apple-sio-core.c').read_text()
+          table = re.search(r'apple_sio_t8010_dma_ranges\[\] = \{(.*?)\n\};', source, re.S).group(1)
+          ranges = [(int(a, 16), int(b, 16)) for a, b in re.findall(r'\{ (0x[0-9a-f]+), (0x[0-9a-f]+) \}', table)]
+          assert sum(a <= endpoint <= b for a, b in ranges) == 1
+          assert {n for a, b in ranges for n in range(a, b + 1)} == {0x1a, 0x2c, 0x5b}
+          print('Built PDM DT request resolves to the registered T8010 SmartIO endpoint')
+          PYTEST
           cp "$dtb" out/
       - name: Archive components, corresponding source and provenance
         run: |
