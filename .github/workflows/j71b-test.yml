@@ -1,277 +1,120 @@
-name: J71b test hardware (no release)
+name: J71b power lifetime checks (no release)
 on:
   workflow_dispatch:
   push:
     branches: [test/j71b-poweroff-ci-nov3]
 permissions:
   contents: read
-  actions: read
+env:
+  KERNEL_SHA: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
+  BASELINE_SHA: 8e7c716c14700920c9ed6bfe150adcaae4887c1b
 jobs:
-  test:
+  offline:
     runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        python: ['3.11', '3.14']
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Check release version
-        if: github.ref_type == 'tag'
-        env:
-          TAG: ${{ github.ref_name }}
-        run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
-      - name: Check release notes
-        if: github.ref_type == 'tag'
-        env:
-          TAG: ${{ github.ref_name }}
-        run: ci/release-notes "$TAG" >/dev/null
-      # orchard runs from its checkout: the hardware data and recipes are files beside src/.
-      # jsonschema validates manifests in tests and release CI; the core needs none (tests/test_core.py).
-      - run: python -m pip install -e '.[validate]' && python -m pip check
-      - run: python -m unittest discover -s tests -v
-  native-smoke:
-    needs: test
-    runs-on: ubuntu-24.04-arm
-    env:
-      ORCHARD_BUILD_NATIVE: '1'
-      ORCHARD_BUILD_ENV_ID: ubuntu-24.04-arm-smoke
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - name: Compile and execute through the native recipe runner
-        run: |
-          mkdir -p out/native-source out/native-output
-          printf 'int main(void) { return 0; }\n' > out/native-source/test.c
-          # shellcheck disable=SC2016
-          python src/orchard/buildenv.py run --image unused-native \
-            --bind "$PWD/out/native-source:/src:ro" --bind "$PWD/out/native-output:/out:rw" --cwd /src -- \
-            bash -euc 'cc "$ORCHARD_SRC/test.c" -o "$ORCHARD_OUT/test"; "$ORCHARD_OUT/test"'
-          test -s out/native-output/test
-  kernel:
-    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    needs: native-smoke
-    runs-on: ubuntu-24.04-arm
-    container: debian:bookworm
-    timeout-minutes: 360
-    strategy:
-      matrix:
-        # Every platform with a kernel series; distribution releases cover all of them.
-        platform: [apple-16k, apple-4k]
-    defaults:
-      run:
-        shell: bash
-    env:
-      ORCHARD_BUILD_NATIVE: '1'
-      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
-      PLATFORM: ${{ matrix.platform }}
-    steps:
-      - run: apt-get update && apt-get install -y git ca-certificates python3
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Checkout exact test kernel
-        uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: 8e7c716c14700920c9ed6bfe150adcaae4887c1b
+          ref: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
+          fetch-depth: 2
           path: linux
           persist-credentials: false
-      - name: Verify source revision
-        run: test "$(git -C linux rev-parse HEAD)" = 8e7c716c14700920c9ed6bfe150adcaae4887c1b
-      # Recipes need only Debian's python3 and its standard library.
-      - name: Install the kernel toolchain
-        run: bash kernel/install-toolchain
-      - name: Run offline power-off checks
-        run: python3 linux/tools/testing/selftests/d2365/test_poweroff.py
-      - name: Build the platform kernel, modules and all device trees once
+      - name: Verify source and unchanged power sequences
         run: |
-          bash kernel/build "$PLATFORM" --kernel-tree "$PWD/linux" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
-          grep -Fx CONFIG_GPIO_APPLE_D2365=y out/kernel-work/output/.config
-          grep -Fx CONFIG_POWER_RESET_APPLE_D2365=y out/kernel-work/output/.config
-          dpkg-query -W > out/components/kernel-toolchain-packages.lock
-      - name: Archive components and corresponding kernel source
+          test "$(git -C linux rev-parse HEAD)" = "$KERNEL_SHA"
+          python3 - <<'PY'
+          import pathlib, subprocess
+          path = 'drivers/power/reset/apple-d2365-poweroff.c'
+          baseline = subprocess.check_output(
+              ['git', '-C', 'linux', 'show', '8e7c716c14700920c9ed6bfe150adcaae4887c1b:' + path],
+              text=True)
+          current = (pathlib.Path('linux') / path).read_text()
+          def sequence(source):
+              return source[source.index('#define D2365_EVENTS'):
+                            source.index('static const struct of_device_id')]
+          assert sequence(current) == sequence(baseline)
+          print('Shutdown/reboot algorithms and data are byte-identical to tested 8e7c716.')
+          PY
+      - name: Run all source-tree regression checks
+        run: python3 linux/tools/testing/selftests/d2365/test_poweroff.py -v
+      - name: Verify installed selftests include the provider fixture
         run: |
-          tar -C out -czf "out/kernel-components-$PLATFORM.tar.gz" components
-          tar -C linux --exclude=.git -czf "out/kernel-source-$PLATFORM.tar.gz" .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: orchard-kernel-${{ matrix.platform }}
-          path: |
-            out/kernel-components-${{ matrix.platform }}.tar.gz
-            out/kernel-source-${{ matrix.platform }}.tar.gz
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 2
-  tools:
-    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    needs: native-smoke
+          install="$RUNNER_TEMP/d2365-installed"
+          make -C linux/tools/testing/selftests/d2365 install INSTALL_PATH="$install"
+          mapfile -t runners < <(find "$install" -name test_poweroff.py)
+          test "${#runners[@]}" = 1
+          D2365_KERNEL_SRC="$PWD/linux" python3 "${runners[0]}" -v
+  kernel:
     runs-on: ubuntu-24.04-arm
     container: debian:bookworm
-    timeout-minutes: 90
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [orchard_apple4k_defconfig, orchard_apple16k_defconfig]
     defaults:
       run:
         shell: bash
     env:
-      ORCHARD_BUILD_NATIVE: '1'
-      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19-rust1.90.0
-      RUSTUP_TOOLCHAIN: '1.90.0'
+      CONFIG: ${{ matrix.config }}
     steps:
       - run: apt-get update && apt-get install -y git ca-certificates python3
       - uses: actions/checkout@v4
         with:
+          ref: 498d90a683750b0826fad69be3d36626c3a0eb34
           persist-credentials: false
-      - name: Install the combined toolchain once
-        run: |
-          bash ci/install-toolchains recovery m1n1
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Build static recovery tools
-        run: |
-          OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/recovery/build-tools
-          mkdir -p out/components/boot
-          cp out/recovery-tools/bin/* out/components/boot/
-      - name: Build quiet loader
-        run: |
-          bash boot/m1n1/build apple --output "$PWD/out/components/quiet/m1n1.bin" \
-            --work-dir "$PWD/out/loader-work" --extra-patch "$PWD/boot/quiet/m1n1.patch" \
-            --extra-cflags '-DQUIET_BOOT'
-          dpkg-query -W > out/components/tools-toolchain-packages.lock
-          tar -C out -czf out/tool-components.tar.gz components
-      - uses: actions/upload-artifact@v4
-        with:
-          name: orchard-tools
-          path: out/tool-components.tar.gz
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 2
-  pongo:
-    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    needs: native-smoke
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
       - uses: actions/checkout@v4
         with:
+          repository: stuart902/linux
+          ref: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
+          fetch-depth: 2
+          path: linux
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - name: Fingerprint the Apple toolchain
-        id: toolchain
+      - name: Install the existing kernel toolchain
+        run: bash kernel/install-toolchain
+      - name: Build affected objects and J71b DTB
         run: |
-          fingerprint=$({ sw_vers; xcodebuild -version; xcrun --sdk iphoneos --show-sdk-build-version; xcrun clang --version; } | shasum -a 256 | awk '{print $1}')
-          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        id: pongo-cache
-        with:
-          path: |
-            out/quiet-pongo.tar.gz
-            out/pongo-source.tar.gz
-          key: quiet-pongo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('boot/quiet/build-pongo.py', 'boot/quiet/pongo.patch') }}
-      - name: Build quiet Pongo once (including newlib)
-        if: steps.pongo-cache.outputs.cache-hit != 'true'
-        run: |
-          python boot/quiet/build-pongo.py --output out/quiet/pongo.bin --work-dir out/pongo-work
-          tar -C out/quiet -czf out/quiet-pongo.tar.gz pongo.bin
-          tar -C out/pongo-work/source --exclude=.git -czf out/pongo-source.tar.gz .
-      - name: Record cache usage
-        env:
-          CACHE_HIT: ${{ steps.pongo-cache.outputs.cache-hit }}
-        run: |
-          printf 'Quiet Pongo exact-input cache hit: %s\n' "${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: orchard-pongo
-          path: |
-            out/quiet-pongo.tar.gz
-            out/pongo-source.tar.gz
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 2
-  assets:
-    needs: [kernel, tools, pongo]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: orchard-*
-          path: out/downloads
-          merge-multiple: true
-      - name: Assemble public component bundle without rebuilding
-        run: |
-          mkdir -p out/publication
-          tar -xzf out/downloads/tool-components.tar.gz -C out
-          tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
-          # One bundle per platform carries its kernel, modules and every DTB, and the
-          # shared tools and loaders; devices/<device>/device.toml names a device's DTB.
-          for platform in apple-16k apple-4k; do
-            mkdir -p "out/platforms/$platform"
-            tar -xzf "out/downloads/kernel-components-$platform.tar.gz" -C "out/platforms/$platform"
-            cp -R out/components/boot out/components/quiet out/components/*.lock "out/platforms/$platform/components/"
-            python ci/package_components.py --platform "$platform" --directory "out/platforms/$platform/components" \
-              --output "out/publication/$platform-components.tar.gz"
+          test "$(git -C linux rev-parse HEAD)" = "$KERNEL_SHA"
+          mkdir -p reports
+          out="$PWD/out"
+          make -C linux O="$out" ARCH=arm64 LLVM=-19 "$CONFIG"
+          cp "$out/.config" reports/resolved.config
+          for symbol in MFD_SIMPLE_MFD_I2C POWER_SUPPLY GPIO_APPLE_D2365 POWER_RESET_APPLE_D2365 APPLE_TRISTAR_CHARGER; do
+            grep -Fx "CONFIG_$symbol=y" "$out/.config"
           done
-          tar -xzf out/downloads/kernel-components-apple-16k.tar.gz -C out
-          # Compatibility: the shared launcher still reads the J71b bundle layout.
-          bundle=out/bundles/j71b/components
-          mkdir -p "$bundle/kernel"
-          cp -R out/components/boot out/components/quiet out/components/*.lock "$bundle/"
-          cp -R out/components/kernel/Image.gz out/components/kernel/kernel.release \
-            out/components/kernel/lib "$bundle/kernel/"
-          read -r _ dtb < <(python kernel/series.py --resolve j71b)
-          cp "out/components/kernel/dtbs/$dtb.dtb" "$bundle/kernel/j71b.dtb"
-          python ci/package_components.py --device j71b --directory "$bundle" \
-            --output out/publication/j71b-components.tar.gz
-          cp out/downloads/*.tar.gz out/publication/
-          # orchard launch starts any device with only Pongo and the storage-capable
-          # m1n1 (orchard.hardware.loader); they are release assets of their own.
-          cp out/components/quiet/m1n1.bin out/components/quiet/pongo.bin out/publication/
-          # orchard update fetches the core with every device and both loaders.
-          python -m pip install -e .
-          python -m orchard.installer core out/publication/orchard-core.pyz \
-            --pongo out/components/quiet/pongo.bin --m1n1 out/components/quiet/m1n1.bin
-          # tool-components.tar.gz stays: a distribution build takes its tools from it.
-          rm out/publication/kernel-components-*.tar.gz out/publication/quiet-pongo.tar.gz
-          # This is a diagnostic build, not a published release or main's cache key.
-          printf '%s\n' '8e7c716c14700920c9ed6bfe150adcaae4887c1b' > out/publication/test-kernel-commit.txt
-          git rev-parse HEAD > out/publication/test-orchard-commit.txt
-          printf '%s\n' '6b5fca68c56868651113ede0063a3061d0b22914' > out/publication/test-orchard-base.txt
-          git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
-          (cd out/publication && sha256sum ./*.tar.gz ./*.bin ./*.pyz ./test-kernel-commit.txt ./test-orchard-commit.txt ./test-orchard-base.txt > SHA256SUMS)
-      - name: Attest public build
-        if: toJSON(github.event.repository.private) == 'false'
-        id: attest
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: out/publication/*
-      - name: Include public attestation bundle
-        if: toJSON(github.event.repository.private) == 'false'
-        env:
-          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
-        run: cp "$BUNDLE_PATH" "out/publication/orchard-build.sigstore.jsonl"
+          make -C linux O="$out" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
+            drivers/power/reset/apple-d2365-poweroff.o \
+            drivers/gpio/gpio-apple-d2365.o \
+            drivers/power/supply/apple_tristar_charger.o \
+            apple/t8010-j71b.dtb
+          for object in drivers/power/reset/apple-d2365-poweroff.o drivers/gpio/gpio-apple-d2365.o drivers/power/supply/apple_tristar_charger.o; do
+            llvm-readelf-19 -h "$out/$object" | tee -a reports/elf-headers.txt
+            llvm-readelf-19 -h "$out/$object" | grep -F AArch64
+          done
+      - name: Compare binding and J71b schema diagnostics with tested baseline
+        if: matrix.config == 'orchard_apple16k_defconfig'
+        run: |
+          apt-get install -y python3-venv
+          python3 -m venv "$PWD/schema-venv"
+          source "$PWD/schema-venv/bin/activate"
+          python3 -m pip install dtschema yamllint
+          python3 -m pip freeze > reports/schema-tools.lock
+          git -C linux worktree add --detach "$PWD/baseline" "$BASELINE_SHA"
+          schemas='power/reset/apple,d2365-poweroff.yaml:mfd/apple,pmic.yaml'
+          for tree in baseline linux; do
+            out="$PWD/schema-$tree"
+            make -C "$tree" O="$out" ARCH=arm64 LLVM=-19 "$CONFIG"
+            make -C "$tree" O="$out" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
+              dt_binding_check DT_SCHEMA_FILES="$schemas" 2>&1 | tee "reports/$tree-binding.log"
+            make -C "$tree" O="$out" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
+              CHECK_DTBS=y DT_SCHEMA_FILES="$schemas" apple/t8010-j71b.dtb \
+              2>&1 | tee "reports/$tree-j71b-schema.log"
+          done
+          echo 'Schema tools may print diagnostics without failing make. Review both logs; job success alone does not mean schema-clean.'
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: orchard-release-assets
-          path: out/publication/*
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 2
-
+          name: j71b-lifetime-${{ matrix.config }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
