@@ -1,4 +1,4 @@
-name: J71b Apple-derived power adapter compile and host tests
+name: J71b Apple power event integration and full kernel link
 on:
   push:
     branches: [ci/j71b-apple-power-nov3]
@@ -24,18 +24,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: f249b5f1be653ca079342476a1c08d41b0c956e0
+          ref: 62860ed2741bf5ecbd4e74daee85c811e25277b1
           path: linux-draft
           persist-credentials: false
       - name: Verify exact source
         run: |
-          test "$(git -C linux-draft rev-parse HEAD)" = f249b5f1be653ca079342476a1c08d41b0c956e0
+          test "$(git -C linux-draft rev-parse HEAD)" = 62860ed2741bf5ecbd4e74daee85c811e25277b1
           test -z "$(git -C linux-draft status --porcelain)"
           mkdir -p out
           git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
       - name: Install Orchard kernel toolchain
         run: bash kernel/install-toolchain
-      - name: Compile only experimental objects using Orchard defconfig
+      - name: Link full kernel with real GPIO event provider
         run: |
           build="$PWD/out/build"
           make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 orchard_apple${{ matrix.pages }}_defconfig
@@ -45,23 +45,29 @@ jobs:
           make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 olddefconfig
           grep -qx 'CONFIG_POWER_RESET_APPLE_D2365_REFERENCE=y' "$build/.config"
           make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" prepare modules_prepare
-          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" drivers/power/reset/
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" vmlinux
           cp "$build/.config" out/kernel.config
           cp "$build"/drivers/power/reset/apple-d2365-reference*.o out/
+          cp "$build/drivers/gpio/gpio-apple-d2365.o" out/
+          llvm-nm-19 "$build/vmlinux" | grep -E ' [Tt] (devm_d2365_reference_register|d2365_reference_shutdown|d2365_reference_restart|apple_d2365_gpio_events_ready|apple_d2365_gpio_quiesce)$' > out/kernel-linked-symbols.txt
+          test "$(wc -l < out/kernel-linked-symbols.txt)" = 5
+          llvm-readelf-19 -h "$build/vmlinux" > out/kernel-elf-header.txt
+          grep -q 'Machine:.*AArch64' out/kernel-elf-header.txt
+          (cd "$build" && sha256sum vmlinux) > out/kernel-link.sha256
           llvm-ar-19 t "$build/drivers/power/reset/built-in.a" > out/archive-members.txt
           grep -q 'apple-d2365-reference-core.o$' out/archive-members.txt
           grep -q 'apple-d2365-reference-adapter.o$' out/archive-members.txt
           # Built-in composites are flattened in this kernel's archive.
           # Partial link checks only internal references, not full vmlinux.
-          ld.lld-19 -r -o out/apple-d2365-reference-check.o out/apple-d2365-reference-core.o out/apple-d2365-reference-adapter.o
+          ld.lld-19 -r -o out/apple-d2365-reference-check.o out/apple-d2365-reference-core.o out/apple-d2365-reference-adapter.o out/gpio-apple-d2365.o
           llvm-nm-19 out/apple-d2365-reference-check.o > out/symbols.txt
-          ! grep -E ' U d2365_reference_(shutdown|restart)$' out/symbols.txt
+          ! grep -E ' U (d2365_reference_(shutdown|restart)|apple_d2365_gpio_(events_ready|quiesce))$' out/symbols.txt
           grep -E ' T devm_d2365_reference_register$' out/symbols.txt
           llvm-readelf-19 -h out/apple-d2365-reference-check.o | tee out/elf-header.txt
           grep -q 'Machine:.*AArch64' out/elf-header.txt
           dpkg-query -W > out/toolchain-packages.lock
           test -z "$(git -C linux-draft status --porcelain)"
-          (cd out && sha256sum *.o default.config kernel.config linux-source-commit.txt symbols.txt elf-header.txt archive-members.txt > SHA256SUMS)
+          (cd out && sha256sum *.o default.config kernel.config linux-source-commit.txt symbols.txt elf-header.txt archive-members.txt kernel-linked-symbols.txt kernel-elf-header.txt kernel-link.sha256 > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: j71b-apple-power-compile-${{ matrix.pages }}
@@ -72,6 +78,9 @@ jobs:
             out/symbols.txt
             out/elf-header.txt
             out/archive-members.txt
+            out/kernel-linked-symbols.txt
+            out/kernel-elf-header.txt
+            out/kernel-link.sha256
             out/linux-source-commit.txt
             out/toolchain-packages.lock
             out/SHA256SUMS
@@ -87,21 +96,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stuart902/linux
-          ref: f249b5f1be653ca079342476a1c08d41b0c956e0
+          ref: 62860ed2741bf5ecbd4e74daee85c811e25277b1
           path: linux-draft
           persist-credentials: false
       - name: Test actual sequence and adapter with synthetic state
         shell: bash
         run: |
-          test "$(git -C linux-draft rev-parse HEAD)" = f249b5f1be653ca079342476a1c08d41b0c956e0
+          test "$(git -C linux-draft rev-parse HEAD)" = 62860ed2741bf5ecbd4e74daee85c811e25277b1
           mkdir -p out
           tests=linux-draft/tools/testing/selftests/d2365_reference
           bash "$tests/run.sh" | tee out/core.log
           python3 "$tests/test_adapter.py" | tee out/adapter.log
+          python3 "$tests/test_event_provider.py" | tee out/event-provider.log
           export CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g'
           export ASAN_OPTIONS=detect_leaks=1
           bash "$tests/run.sh" | tee out/core-sanitizer.log
           python3 "$tests/test_adapter.py" | tee out/adapter-sanitizer.log
+          python3 "$tests/test_event_provider.py" | tee out/event-provider-sanitizer.log
           git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
           test -z "$(git -C linux-draft status --porcelain)"
       - uses: actions/upload-artifact@v4
@@ -110,3 +121,4 @@ jobs:
           path: out/*
           retention-days: 7
           if-no-files-found: error
+
