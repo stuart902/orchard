@@ -94,7 +94,7 @@ jobs:
       - name: Compare binding and J71b schema diagnostics with tested baseline
         if: matrix.config == 'orchard_apple16k_defconfig'
         run: |
-          apt-get install -y python3-venv
+          apt-get install -y python3-venv python3-dev swig
           python3 -m venv "$PWD/schema-venv"
           source "$PWD/schema-venv/bin/activate"
           python3 -m pip install dtschema yamllint
