@@ -1,0 +1,111 @@
+name: J71b audio RAM image (no playback)
+on:
+  push:
+    branches: [test/j71b-audio-ram-nov3]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Check disk and unchanged source compatibility
+        shell: bash
+        run: |
+          df -h .
+          # Both source builds differ from this Orchard base only in CI wiring.
+          for source in 498d90a683750b0826fad69be3d36626c3a0eb34 915ffcb4837ed142d8ef3b2a94fda45ddf5b4f56; do
+            git diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 "$source" -- . ':!.github'
+          done
+          git diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 HEAD -- src boot kernel devices examples
+      - name: Download exact successful build artifacts and verify their hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, urllib.request, zipfile
+          root = pathlib.Path('out/inputs')
+          root.mkdir(parents=True)
+          inputs = [
+            ('kernel', 41584578550, '915ffcb4837ed142d8ef3b2a94fda45ddf5b4f56', 13207658705, 'b7f5e67d93d64f363d473379e125d296a6025239f2172946cf1d33331caa159c'),
+            ('tools', 41579299652, '498d90a683750b0826fad69be3d36626c3a0eb34', 13205248045, '8311a66ac814843dc9af2df9b723bb6c474ed67b9bfc4fa909cedbdb33b4cfb8'),
+            ('pongo', 41579299652, '498d90a683750b0826fad69be3d36626c3a0eb34', 13205093610, '0e098bcd257f92be88a4b8e93801f67016c6b8f963b0a670510111409ddd9120'),
+          ]
+          api = 'https://api.github.com/repos/stuart902/orchard'
+          header = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          def get(path):
+              with urllib.request.urlopen(urllib.request.Request(api + path, headers=header)) as r:
+                  return json.load(r)
+          for name, run, sha, artifact, digest in inputs:
+              status = get(f'/actions/runs/{run}')
+              assert status['conclusion'] == 'success' and status['head_sha'] == sha
+              metadata = get(f'/actions/artifacts/{artifact}')
+              assert not metadata['expired'] and metadata['workflow_run']['id'] == run
+              assert metadata['digest'] == 'sha256:' + digest
+              target = root / (name + '.zip')
+              subprocess.run(['curl', '--fail', '--location', '--retry', '2', '--silent', '--show-error',
+                  '-H', 'Authorization: Bearer ' + os.environ['GH_TOKEN'],
+                  api + f'/actions/artifacts/{artifact}/zip', '-o', str(target)], check=True)
+              assert hashlib.file_digest(target.open('rb'), 'sha256').hexdigest() == digest
+              with zipfile.ZipFile(target) as z:
+                  assert all(not p.startswith('/') and '..' not in pathlib.PurePosixPath(p).parts for p in z.namelist())
+                  z.extractall(root / name)
+              target.unlink()
+          provenance = dict(kernel_commit='4d80a6b183d51565d442f745ea5e95160107e032',
+              orchard_base='6b5fca68c56868651113ede0063a3061d0b22914',
+              packaging_commit=os.environ['GITHUB_SHA'], platform='apple-16k', board='j71b',
+              scope='Boot, touch and ALSA enumeration only; no automatic playback; no microphone or volume fix',
+              inputs=[dict(name=n, run=r, source_commit=s, artifact=a, sha256=d) for n,r,s,a,d in inputs])
+          (root / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+          PY
+          (cd out/inputs/kernel && sha256sum -c SHA256SUMS)
+          test "$(cat out/inputs/kernel/linux-source-commit.txt)" = 4d80a6b183d51565d442f745ea5e95160107e032
+      - name: Assemble unchanged hardware-check payload with precompiled components
+        shell: bash
+        run: |
+          mkdir -p out/runtime/orchard out/unpacked out/publication
+          git archive HEAD | tar -x -C out/runtime/orchard
+          tar -xzf out/inputs/kernel/kernel-components-apple-16k.tar.gz -C out/unpacked
+          tar -xzf out/inputs/tools/tool-components.tar.gz -C out/unpacked
+          test -s out/unpacked/components/quiet/m1n1.bin
+          test -s out/unpacked/components/boot/busybox
+          tar -xzf out/inputs/pongo/quiet-pongo.tar.gz -C out/unpacked/components/quiet
+          mv out/unpacked/components out/runtime/orchard/audio-components
+          cp out/inputs/provenance.json out/runtime/orchard/audio-test-provenance.json
+          cp ci/audio-ram-README.md out/runtime/README.md
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          root = Path('out/runtime/orchard')
+          paths = sorted(p for p in root.rglob('*') if p.is_file() and not p.is_symlink())
+          (root / 'BUNDLE-SHA256SUMS').write_text(''.join(
+              hashlib.file_digest(p.open('rb'), 'sha256').hexdigest() + '  ' + str(p.relative_to(root)) + '\n' for p in paths))
+          PY
+          python out/runtime/orchard/ci/prepare-audio-ram.py
+          # Relocation is required by the standard firmware-layer assembler.
+          # Verify a fresh location works without compiling or device access.
+          mv out/runtime out/relocated
+          python out/relocated/orchard/ci/prepare-audio-ram.py
+          tar -C out/relocated -czf out/publication/j71b-audio-ram-nov3.tar.gz .
+          cp out/inputs/kernel/kernel-source-apple-16k.tar.gz out/publication/
+          cp out/inputs/pongo/pongo-source.tar.gz out/publication/
+          cp out/inputs/provenance.json out/publication/audio-test-provenance.json
+          (cd out/publication && sha256sum *.tar.gz *.json > SHA256SUMS)
+          printf '%s\n' 'J71b boot/touch/ALSA enumeration image; kernel reused, no compiler invoked.' 'No playback, no microphone implementation, no volume fix, no hardware test performed.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-audio-ram-nov3-4d80a6b
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
