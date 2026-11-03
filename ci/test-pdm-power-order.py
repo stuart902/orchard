@@ -25,21 +25,25 @@ static int pm_runtime_put_sync(void*p){logc('P');return pmerr;}
 static int apple_aop_pdm_clock_stop(void*p){logc('C');return clkerr;}
 static bool apple_aop_pdm_clock_needs_retention(void*p){logc('N');return retention;}
 '''.replace('int irq;','int irq; void *dma;')+fn+r'''
-static void run(bool active,int r,int d,int p,int c,bool uncertain,const char*expected,bool parks){
- struct t8010_pdm x={.powered=active,.clocked=active,.irq_enabled=active,.prepared=active};
+static void run(bool powered,bool clocked,int r,int d,int p,int c,bool uncertain,const char*expected,bool parks){
+ struct t8010_pdm x={.powered=powered,.clocked=clocked,.irq_enabled=powered,.prepared=powered};
  pos=0;rxerr=r;dmaerr=d;pmerr=p;clkerr=c;retention=uncertain;
  int failed=setjmp(fault);if(!failed)pdm_power_down(&x);
  assert(!!failed==parks);assert(!strcmp(logbuf,expected));
 }
 int main(void){
- run(true,0,0,0,0,false,"RDIGGPCN",false);
- run(false,0,0,0,0,false,"RDN",false);
- run(true,-1,0,0,0,false,"RDF",true);
- run(true,0,-1,0,0,false,"RDF",true);
- run(true,0,0,-1,0,false,"RDIGGPF",true);
- run(true,0,0,0,-1,true,"RDIGGPCF",true);
- run(false,0,0,0,0,true,"RDNF",true);
- puts("7 actual power_down ordering/failure cases passed");
+ run(true,true,0,0,0,0,false,"RDIGGPCN",false);
+ run(false,false,0,0,0,0,false,"RDN",false);
+ run(true,true,-1,0,0,0,false,"RDF",true);
+ run(true,true,0,-1,0,0,false,"RDF",true);
+ run(true,true,0,0,-1,0,false,"RDIGGPF",true);
+ run(true,true,0,0,0,-1,true,"RDIGGPCF",true);
+ run(false,false,0,0,0,0,true,"RDNF",true);
+ run(true,true,0,0,1,0,false,"RDIGGPCN",false);
+ run(false,true,0,0,0,0,false,"RDCN",false);
+ run(true,false,0,0,0,0,false,"RDIPN",false);
+ run(false,true,0,0,0,-1,true,"RDCF",true);
+ puts("11 actual power_down ordering/failure cases passed");
 }
 '''
 out=Path(tempfile.mkdtemp(prefix='j71b-pdm-order-')) / 'test_power_order.c';out.write_text(c)
