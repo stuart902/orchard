@@ -1,22 +1,23 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Codex <codex@openai.com>
-Date: Sat, 31 Oct 2026 20:53:12 -0300
+From: Stuart Fraser <60394096+stuart902@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 17:29:23 -0400
 Subject: [PATCH] dt-bindings: power: reset: Describe Apple D2365 power off
 
-Describe the PMIC child for boards using the D2365 direct standby
-sequence. Require a reference to the external supply because this
-hardware follows a restart path rather than standby when a source is
-attached.
+Describe the PMIC child and its external power supply reference. Only
+boards instantiating this device use the direct shutdown path.
 
-Signed-off-by: Codex <codex@openai.com>
+[Orchard: from stuart902/linux 778174c50d5fd6b36849f9eea728a6811b1b6e9e;
+consolidated export, production source unchanged.]
+
+Assisted-by: LLM
 ---
  .../devicetree/bindings/mfd/apple,pmic.yaml   |  3 ++
- .../power/reset/apple,d2365-poweroff.yaml     | 51 +++++++++++++++++++
- 2 files changed, 54 insertions(+)
+ .../power/reset/apple,d2365-poweroff.yaml     | 53 +++++++++++++++++++
+ 2 files changed, 56 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/power/reset/apple,d2365-poweroff.yaml
 
 diff --git a/Documentation/devicetree/bindings/mfd/apple,pmic.yaml b/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
-index 947f839..47c31b3 100644
+index 947f83928..47c31b32e 100644
 --- a/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
 +++ b/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
 @@ -60,6 +60,9 @@ properties:
@@ -31,10 +32,10 @@ index 947f839..47c31b3 100644
      $ref: /schemas/power/supply/apple,d2365-charger.yaml
 diff --git a/Documentation/devicetree/bindings/power/reset/apple,d2365-poweroff.yaml b/Documentation/devicetree/bindings/power/reset/apple,d2365-poweroff.yaml
 new file mode 100644
-index 0000000..29af6ec
+index 000000000..e09123e6b
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/power/reset/apple,d2365-poweroff.yaml
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,53 @@
 +# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
 +%YAML 1.2
 +---
@@ -60,7 +61,9 @@ index 0000000..29af6ec
 +  power-supplies:
 +    $ref: /schemas/types.yaml#/definitions/phandle-array
 +    maxItems: 1
-+    description: External USB or charger power supply.
++    description: |
++      External USB or charger power supply provided by a sibling child of
++      the same PMIC. Its cached state complements the direct PMIC source check.
 +
 +required:
 +  - compatible

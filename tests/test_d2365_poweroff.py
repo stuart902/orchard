@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Offline D2365 shutdown regression checks; never access a device.
 
 Compile the driver's actual prepare/final functions against an in-memory bus.
@@ -10,25 +11,35 @@ import subprocess
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
 DRIVER = 'drivers/power/reset/apple-d2365-poweroff.c'
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def patched_source(path):
+    """Read the added/context text of the one patch that changes this file."""
+    found = []
+    for patch in sorted(p for layer in ('drivers', 'devices')
+                        for p in (ROOT / 'kernel/patches' / layer).rglob('*.patch')):
+        lines = patch.read_text().splitlines()
+        marker = '+++ b/' + path
+        if marker not in lines:
+            continue
+        output = []
+        for line in lines[lines.index(marker) + 1:]:
+            if line.startswith('diff --git ') or line == '-- ':
+                break
+            if line.startswith(('+', ' ')):
+                output.append(line[1:])
+        found.append('\n'.join(output) + '\n')
+    if not found:
+        raise AssertionError('No patch changes ' + path)
+    # The power driver is a new file; GPIO assertions only need final hunks.
+    return found[-1]
 
 
 def driver_source():
-    for patch in sorted((ROOT / 'kernel/patches/drivers/power').glob('*.patch')):
-        lines = patch.read_text().splitlines()
-        marker = '+++ b/' + DRIVER
-        if marker not in lines:
-            continue
-        start = lines.index(marker) + 1
-        output = []
-        for line in lines[start:]:
-            if line.startswith('diff --git ') or line == '-- ':
-                break
-            if line.startswith('+') or line.startswith(' '):
-                output.append(line[1:])
-        return '\n'.join(output)
-    raise AssertionError('D2365 power-off driver patch is missing')
+    return patched_source(DRIVER)
+
 
 
 class D2365Poweroff(unittest.TestCase):
@@ -68,6 +79,9 @@ class D2365Poweroff(unittest.TestCase):
     def test_all_gpio_values_and_paired_bytes_preserved(self):
         self.check('gpio')
 
+    def test_boot_state_preserves_only_verified_bits(self):
+        self.check('boot')
+
     def test_every_nonzero_source_status_and_unknown_state_restarts(self):
         self.check('sources')
 
@@ -77,6 +91,9 @@ class D2365Poweroff(unittest.TestCase):
     def test_each_transaction_failure_prevents_successful_standby(self):
         self.check('failures')
 
+    def test_normal_restart_only_acknowledges_events_and_clears_boot_stage(self):
+        self.check('restart')
+
     def test_final_callback_never_touches_bus_or_sleeps(self):
         self.check('final')
 
@@ -85,17 +102,14 @@ class D2365Poweroff(unittest.TestCase):
             config = (ROOT / 'kernel/configs' / platform / 'config').read_text()
             self.assertIn('CONFIG_POWER_RESET_APPLE_D2365=y\n', config)
 
-    def test_poweroff_node_is_enabled_only_on_j71b(self):
-        patches = list((ROOT / 'kernel/patches/devices/t8010').glob('0014-*.patch'))
-        self.assertEqual(len(patches), 1)
-        patch = patches[0].read_text()
-        self.assertEqual(re.findall(r'^\+\+\+ b/(.+)$', patch, re.M),
-                         ['arch/arm64/boot/dts/apple/t8010-j71b.dts'])
-        self.assertIn('compatible = "apple,d2365-poweroff";', patch)
-        self.assertIn('power-supplies = <&tristar_charger>;', patch)
+    def test_j71b_poweroff_node_has_supply(self):
+        source = patched_source('arch/arm64/boot/dts/apple/t8010-j71b.dts')
+        self.assertIn('compatible = "apple,d2365-poweroff";', source)
+        self.assertIn('power-supplies = <&tristar_charger>;', source)
 
     def test_both_prepare_and_atomic_final_handlers_are_registered(self):
         for mode, callback in (
+                ('SYS_OFF_MODE_RESTART_PREPARE', 'apple_d2365_restart_prepare'),
                 ('SYS_OFF_MODE_POWER_OFF_PREPARE', 'apple_d2365_poweroff_prepare'),
                 ('SYS_OFF_MODE_POWER_OFF', 'apple_d2365_poweroff_final')):
             self.assertRegex(self.source,
@@ -108,13 +122,10 @@ class D2365Poweroff(unittest.TestCase):
 
 class D2365EventQuiesce(unittest.TestCase):
     def test_shutdown_drains_irq_and_retry_after_closing_gate(self):
-        patch = (ROOT / 'kernel/patches/drivers/gpio/'
-                 '0005-gpio-apple-d2365-Quiesce-PMU-events-during-shutdown.patch').read_text()
-        post = '\n'.join(line[1:] for line in patch.splitlines()
-                         if line.startswith(('+', ' ')) and not line.startswith('+++'))
-        start = post.index('static void apple_pmic_gpio_shutdown(')
+        post = patched_source('drivers/gpio/gpio-apple-d2365.c')
+        start = post.index('void apple_d2365_gpio_quiesce(')
         shutdown = post[start:post.index('\n}', start) + 2]
-        self.assertIn('.shutdown = apple_pmic_gpio_shutdown', post)
+        self.assertNotIn('.shutdown = apple_pmic_gpio_shutdown', post)
         self.assertIn('if (!retry || gpio->shutting_down)', post)
         self.assertIn('!gpio->removing && !gpio->shutting_down &&', post)
         self.assertIn('if (gpio->removing || gpio->shutting_down)', post)
@@ -135,9 +146,9 @@ struct apple_pmic_gpio {
     bool shutting_down;
     int irq_lock, parent_irq, irq_retry;
 };
-struct platform_device { struct apple_pmic_gpio *data; };
+struct device { struct apple_pmic_gpio *data; };
 static unsigned step;
-static struct apple_pmic_gpio *platform_get_drvdata(struct platform_device *p)
+static struct apple_pmic_gpio *dev_get_drvdata(struct device *p)
 { return p->data; }
 static void mutex_lock(int *lock) { assert(step++ == 0 && !*lock); *lock = 1; }
 static void apple_pmic_irq_hold(struct apple_pmic_gpio *gpio, bool retry)
@@ -150,11 +161,11 @@ static void cancel_delayed_work_sync(int *work) { assert(step++ == 4); }
 int main(void)
 {
     struct apple_pmic_gpio gpio = { .parent_irq = 7 };
-    struct platform_device pdev = { &gpio };
-    apple_pmic_gpio_shutdown(&pdev);
+    struct device dev = { &gpio };
+    apple_d2365_gpio_quiesce(&dev);
     assert(!step && !gpio.shutting_down);
     gpio.domain = &gpio;
-    apple_pmic_gpio_shutdown(&pdev);
+    apple_d2365_gpio_quiesce(&dev);
     assert(step == 5 && gpio.shutting_down && !gpio.irq_lock);
     return 0;
 }
@@ -167,6 +178,44 @@ int main(void)
                            check=True, capture_output=True, text=True, timeout=30)
             subprocess.run([str(binary)], check=True, capture_output=True,
                            text=True, timeout=5)
+
+
+class D2365Providers(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        compiler = shutil.which('cc') or shutil.which('clang')
+        if compiler is None:
+            raise unittest.SkipTest('A host C compiler is required for provider checks')
+        cls.temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temporary.cleanup)
+        directory = Path(cls.temporary.name)
+        source = driver_source()
+        helpers = source[source.index('static void apple_d2365_device_put('):
+                         source.index('static struct platform_driver apple_d2365_poweroff_driver')]
+        fixture = (ROOT / 'tests/fixtures/d2365/probe.c').read_text()
+        program = directory / 'probe.c'
+        program.write_text(fixture.replace('/* DRIVER */', helpers))
+        cls.binary = directory / 'probe'
+        result = subprocess.run([compiler, '-std=c11', '-Wall', '-Wextra',
+                                 '-Wno-unused-parameter', '-Wno-sign-compare',
+                                 str(program), '-o', str(cls.binary)],
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+
+    def check(self, scenario):
+        result = subprocess.run([str(self.binary), scenario], capture_output=True,
+                                text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_supply_is_a_distinct_same_pmic_child(self):
+        self.check('topology')
+
+    def test_probe_failures_release_provider_supply_and_handler_references(self):
+        self.check('failures')
+
+    def test_provider_readiness_rejects_already_unbinding_suppliers(self):
+        self.check('lifetime')
 
 
 if __name__ == '__main__':

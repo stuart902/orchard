@@ -1,44 +1,44 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Codex <codex@openai.com>
-Date: Sat, 31 Oct 2026 20:50:22 -0300
-Subject: [PATCH] power: reset: Add Apple D2365 direct PMIC shutdown
+From: Stuart Fraser <60394096+stuart902@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 17:29:23 -0400
+Subject: [PATCH] power: reset: Add Apple D2365 shutdown and restart
+ preparation
 
-Use the parent simple-MFD regmap for the D2365 normal direct shutdown
-sequence: acknowledge events, install shutdown masks, disable the alarm,
-clear shutdown bookkeeping, preserve boot-state bits, prepare GPIOs,
-acknowledge events again and request standby.
+Run D2365 normal shutdown transactions in sleepable sys-off preparation.
+Keep explicit managed links to same-PMIC GPIO and supply providers,
+reject unbinding suppliers during probe and keep the atomic final
+callback free of I2C operations. Refresh paired GPIO bytes before
+writing, report uncertain standby transactions and keep ordinary reboot
+preparation separate from conditional shutdown restart bookkeeping.
 
-Perform I2C operations in the sleepable sys-off prepare stage. Register
-a final handler as well so kernel_can_power_off() recognizes the
-implementation; it performs no I2C and reports unsuccessful standby.
-Route attached or unknown external power to machine_restart(), as the
-direct PMIC path must not request standby in that case. Check both the
-external supply and live PMIC status and recheck before the command.
+The existing watchdog performs reset. Linux source checks, failure
+policy and bounded waiting are adaptations, not identical Apple
+behavior. Hardware observations do not prove electrical power-off or the
+final executed path.
 
-The register sequence was independently implemented from verified D2365
-hardware behavior. This implements normal shutdown without RTC/UPO wake
-scheduling or a separate external shutdown controller. Hardware testing
-is still required.
+[Orchard: from stuart902/linux 778174c50d5fd6b36849f9eea728a6811b1b6e9e;
+consolidated export, production source unchanged.]
 
-Signed-off-by: Codex <codex@openai.com>
+Assisted-by: LLM
 ---
- drivers/power/reset/Kconfig                |   9 +
+ drivers/power/reset/Kconfig                |  10 +
  drivers/power/reset/Makefile               |   1 +
- drivers/power/reset/apple-d2365-poweroff.c | 297 +++++++++++++++++++++
- 3 files changed, 307 insertions(+)
+ drivers/power/reset/apple-d2365-poweroff.c | 449 +++++++++++++++++++++
+ 3 files changed, 460 insertions(+)
  create mode 100644 drivers/power/reset/apple-d2365-poweroff.c
 
 diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
-index bce996b..33f9f20 100644
+index bce996bbe..5486bebd6 100644
 --- a/drivers/power/reset/Kconfig
 +++ b/drivers/power/reset/Kconfig
-@@ -149,6 +149,15 @@ config POWER_RESET_MACSMC
+@@ -149,6 +149,16 @@ config POWER_RESET_MACSMC
  
  	  Say Y here if you have an Apple Silicon Mac.
  
 +config POWER_RESET_APPLE_D2365
 +	bool "Apple D2365 PMIC power-off driver"
 +	depends on OF && MFD_SIMPLE_MFD_I2C=y && POWER_SUPPLY=y
++	depends on GPIO_APPLE_D2365=y
 +	help
 +	  Power off boards using the Apple D2365 (Angel) PMIC direct
 +	  standby sequence. With an external power source attached, restart
@@ -49,7 +49,7 @@ index bce996b..33f9f20 100644
  	bool "Qualcomm MSM power-off driver"
  	depends on ARCH_QCOM
 diff --git a/drivers/power/reset/Makefile b/drivers/power/reset/Makefile
-index e31cab4..b362108 100644
+index e31cab4ba..b36210828 100644
 --- a/drivers/power/reset/Makefile
 +++ b/drivers/power/reset/Makefile
 @@ -1,4 +1,5 @@
@@ -60,16 +60,20 @@ index e31cab4..b362108 100644
  obj-$(CONFIG_POWER_RESET_AT91_RESET) += at91-reset.o
 diff --git a/drivers/power/reset/apple-d2365-poweroff.c b/drivers/power/reset/apple-d2365-poweroff.c
 new file mode 100644
-index 0000000..d72cfee
+index 000000000..e722d27c8
 --- /dev/null
 +++ b/drivers/power/reset/apple-d2365-poweroff.c
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,449 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/* Apple D2365 (Angel) direct PMIC shutdown. */
 +
 +#include <linux/bits.h>
 +#include <linux/delay.h>
++#include <linux/device.h>
 +#include <linux/err.h>
++#include <linux/gpio/apple-d2365.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
 +#include <linux/module.h>
 +#include <linux/platform_device.h>
 +#include <linux/power_supply.h>
@@ -92,7 +96,7 @@ index 0000000..d72cfee
 +#define D2365_SHUTDOWN_FLAGS	0x5003
 +#define D2365_BOOT_STATE		0x500f
 +#define D2365_BOOT_PRESERVE	0x27
-+#define D2365_BOOT_RESTART	0x90
++#define D2365_BOOT_SOURCE_FLAGS	0x90
 +
 +struct apple_d2365_poweroff_data {
 +	u8 event_mask[D2365_EVENT_COUNT];
@@ -102,9 +106,11 @@ index 0000000..d72cfee
 +	struct device *dev;
 +	struct regmap *regmap;
 +	struct power_supply *supply;
++	struct device *event_dev;
 +	const struct apple_d2365_poweroff_data *data;
 +	bool restart;
-+	bool standby_requested;
++	bool standby_transaction_attempted;
++	bool standby_acknowledged;
 +};
 +
 +static int apple_d2365_boot_state(struct apple_d2365_poweroff *pmic)
@@ -118,7 +124,7 @@ index 0000000..d72cfee
 +
 +	value &= D2365_BOOT_PRESERVE;
 +	if (pmic->restart)
-+		value |= D2365_BOOT_RESTART;
++		value |= D2365_BOOT_SOURCE_FLAGS;
 +
 +	return regmap_write(pmic->regmap, D2365_BOOT_STATE, value);
 +}
@@ -126,6 +132,7 @@ index 0000000..d72cfee
 +static int apple_d2365_gpio_prepare(struct apple_d2365_poweroff *pmic)
 +{
 +	u8 pairs[D2365_GPIO_PAIR_COUNT * 2];
++	u8 fresh[D2365_GPIO_PAIR_COUNT * 2];
 +	u8 extra[D2365_GPIO_COUNT - D2365_GPIO_PAIR_COUNT];
 +	unsigned int value;
 +	int i, ret;
@@ -150,6 +157,14 @@ index 0000000..d72cfee
 +	for (i = 0; i < ARRAY_SIZE(extra); i++)
 +		if (extra[i] <= 0x3f)
 +			extra[i] &= ~BIT(0);
++
++	/* Preserve paired bytes from a fresh read, not the initial snapshot. */
++	ret = regmap_bulk_read(pmic->regmap, D2365_GPIO_PAIRS,
++			       fresh, sizeof(fresh));
++	if (ret)
++		return ret;
++	for (i = 1; i < sizeof(pairs); i += 2)
++		pairs[i] = fresh[i];
 +
 +	ret = regmap_bulk_write(pmic->regmap, D2365_GPIO_PAIRS,
 +				pairs, sizeof(pairs));
@@ -233,12 +248,35 @@ index 0000000..d72cfee
 +	}
 +
 +	/* Force the command write even if a previous request bit remains set. */
++	/* A failed transfer can still reach the PMIC; never retry the request. */
++	pmic->standby_transaction_attempted = true;
 +	ret = regmap_write_bits(pmic->regmap, D2365_STANDBY,
 +				D2365_STANDBY_REQUEST, D2365_STANDBY_REQUEST);
 +	if (!ret)
-+		pmic->standby_requested = true;
++		pmic->standby_acknowledged = true;
 +
 +	return ret;
++}
++
++/* Normal reboot bookkeeping; the existing watchdog still performs reset. */
++static int apple_d2365_restart_prepare(struct sys_off_data *off)
++{
++	struct apple_d2365_poweroff *pmic = off->cb_data;
++	u8 events[D2365_EVENT_COUNT];
++	int ret;
++
++	apple_d2365_gpio_quiesce(pmic->event_dev);
++	ret = regmap_bulk_read(pmic->regmap, D2365_EVENTS,
++			       events, sizeof(events));
++	if (ret)
++		dev_err(pmic->dev, "restart event acknowledgement failed: %d\n", ret);
++
++	/* Attempt both operations, even if the event read failed. */
++	ret = regmap_write(pmic->regmap, D2365_SHUTDOWN_STATE, 0);
++	if (ret)
++		dev_err(pmic->dev, "restart boot-stage clear failed: %d\n", ret);
++
++	return NOTIFY_DONE;
 +}
 +
 +static int apple_d2365_poweroff_prepare(struct sys_off_data *off)
@@ -248,8 +286,12 @@ index 0000000..d72cfee
 +	unsigned int status;
 +	int ret;
 +
++	apple_d2365_gpio_quiesce(pmic->event_dev);
++
 +	/* Unknown source state is never permission to enter standby. */
 +	pmic->restart = true;
++	pmic->standby_transaction_attempted = false;
++	pmic->standby_acknowledged = false;
 +	ret = power_supply_get_property(pmic->supply, POWER_SUPPLY_PROP_ONLINE,
 +					&online);
 +	if (ret)
@@ -275,8 +317,8 @@ index 0000000..d72cfee
 +
 +fail:
 +	pmic->restart = true;
-+	dev_err(pmic->dev, "shutdown preparation failed: %d; restarting without standby\n",
-+		ret);
++	dev_err(pmic->dev, "shutdown preparation failed: %d; standby transaction %s; restarting\n",
++		ret, pmic->standby_transaction_attempted ? "outcome unknown" : "not attempted");
 +	return NOTIFY_DONE;
 +}
 +
@@ -288,10 +330,10 @@ index 0000000..d72cfee
 +	if (pmic->restart) {
 +		dev_emerg(pmic->dev, "requesting restart instead of PMIC standby\n");
 +		machine_restart(NULL);
-+		dev_emerg(pmic->dev, "restart failed\n");
 +	} else {
 +		dev_emerg(pmic->dev, "power off failed (standby request %s)\n",
-+			  pmic->standby_requested ? "sent" : "not sent");
++			  pmic->standby_acknowledged ? "acknowledged" :
++			  pmic->standby_transaction_attempted ? "outcome unknown" : "not attempted");
 +	}
 +
 +	return NOTIFY_DONE;
@@ -313,6 +355,109 @@ index 0000000..d72cfee
 +};
 +MODULE_DEVICE_TABLE(of, apple_d2365_poweroff_of_match);
 +
++static void apple_d2365_device_put(void *data)
++{
++	put_device(data);
++}
++
++/* The GPIO event controller is a sibling under the same PMIC. */
++static int apple_d2365_get_event_provider(struct device *dev,
++					struct apple_d2365_poweroff *pmic)
++{
++	struct device_node *node;
++	struct platform_device *provider;
++	struct device_link *link;
++	int ret;
++
++	node = of_get_compatible_child(dev->parent->of_node,
++				       "apple,d2365-pmic-gpio");
++	if (!node)
++		return dev_err_probe(dev, -ENODEV, "no PMIC event provider\n");
++	provider = of_find_device_by_node(node);
++	of_node_put(node);
++	if (!provider)
++		return -EPROBE_DEFER;
++
++	ret = devm_add_action_or_reset(dev, apple_d2365_device_put,
++				       &provider->dev);
++	if (ret)
++		return ret;
++
++	link = device_link_add(dev, &provider->dev, DL_FLAG_AUTOREMOVE_CONSUMER);
++	if (!link)
++		return dev_err_probe(dev, -EINVAL, "cannot link PMIC event provider\n");
++
++	/* A link added during probe does not itself guarantee readiness. */
++	device_lock(&provider->dev);
++	if (!device_is_bound(&provider->dev) ||
++	    READ_ONCE(link->status) != DL_STATE_CONSUMER_PROBE)
++		ret = -EPROBE_DEFER;
++	else if (!apple_d2365_gpio_events_ready(&provider->dev))
++		ret = -ENODEV;
++	device_unlock(&provider->dev);
++	if (ret)
++		return dev_err_probe(dev, ret, "PMIC event provider not ready\n");
++	pmic->event_dev = &provider->dev;
++	return 0;
++}
++
++/*
++ * The supply and the event controller are children of this same PMIC.
++ * Link before taking a supply reference: that reference alone does not
++ * keep the provider's driver data alive.
++ */
++static int apple_d2365_get_supply(struct device *dev,
++				struct apple_d2365_poweroff *pmic)
++{
++	struct device_node *node;
++	struct device *provider;
++	struct device_link *link;
++	int ret;
++
++	node = of_parse_phandle(dev->of_node, "power-supplies", 0);
++	if (!node)
++		return dev_err_probe(dev, -ENODEV, "no external power supply\n");
++	if (node == dev->of_node || node->parent != dev->parent->of_node) {
++		of_node_put(node);
++		return dev_err_probe(dev, -EINVAL, "power supply must be a PMIC sibling\n");
++	}
++	provider = device_find_child(dev->parent, node, device_match_of_node);
++	of_node_put(node);
++	if (!provider)
++		return -EPROBE_DEFER;
++
++	ret = devm_add_action_or_reset(dev, apple_d2365_device_put, provider);
++	if (ret)
++		return ret;
++
++	link = device_link_add(dev, provider, DL_FLAG_AUTOREMOVE_CONSUMER);
++	if (!link)
++		return dev_err_probe(dev, -EINVAL, "cannot link power supply provider\n");
++
++	device_lock(provider);
++	if (!device_is_bound(provider) ||
++	    READ_ONCE(link->status) != DL_STATE_CONSUMER_PROBE) {
++		ret = -EPROBE_DEFER;
++		goto unlock;
++	}
++
++	pmic->supply = devm_power_supply_get_by_reference(dev, "power-supplies");
++	if (IS_ERR(pmic->supply))
++		ret = PTR_ERR(pmic->supply);
++	else if (!pmic->supply)
++		ret = -EPROBE_DEFER;
++	else if (pmic->supply->dev.parent != provider)
++		ret = -ENODEV;
++	else
++		ret = 0;
++
++unlock:
++	device_unlock(provider);
++	if (ret)
++		return dev_err_probe(dev, ret, "external power supply not ready\n");
++	return 0;
++}
++
 +static int apple_d2365_poweroff_probe(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
@@ -329,12 +474,19 @@ index 0000000..d72cfee
 +	if (!pmic->regmap)
 +		return dev_err_probe(dev, -ENODEV, "parent has no register map\n");
 +
-+	pmic->supply = devm_power_supply_get_by_reference(dev, "power-supplies");
-+	if (IS_ERR(pmic->supply))
-+		return dev_err_probe(dev, PTR_ERR(pmic->supply),
-+				     "cannot get external power supply\n");
-+	if (!pmic->supply)
-+		return dev_err_probe(dev, -EPROBE_DEFER, "external power supply not ready\n");
++	ret = apple_d2365_get_event_provider(dev, pmic);
++	if (ret)
++		return ret;
++
++	ret = apple_d2365_get_supply(dev, pmic);
++	if (ret)
++		return ret;
++
++	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART_PREPARE,
++					    SYS_OFF_PRIO_DEFAULT,
++					    apple_d2365_restart_prepare, pmic);
++	if (ret)
++		return ret;
 +
 +	pmic->restart = true;
 +	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_POWER_OFF_PREPARE,
