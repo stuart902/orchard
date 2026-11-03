@@ -1,0 +1,130 @@
+name: Experimental J71b microphone RAM package
+on:
+  push:
+    branches: [test/j71b-capture-ram-nov3]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 45
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates curl python3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check disk and unchanged source compatibility
+        shell: bash
+        run: |
+          df -h .
+          # Both source builds differ from this Orchard base only in CI wiring.
+          for source in 498d90a683750b0826fad69be3d36626c3a0eb34 a63fd7f884a1af7cf25467768cc80dafc06f0713; do
+            git diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 "$source" -- src boot kernel devices examples
+          done
+          git diff --exit-code 6b5fca68c56868651113ede0063a3061d0b22914 HEAD -- src boot kernel devices examples
+      - name: Download exact successful build artifacts and verify their hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, urllib.request, zipfile
+          root = pathlib.Path('out/inputs')
+          root.mkdir(parents=True)
+          inputs = [
+            ('kernel', 41655987152, 'a63fd7f884a1af7cf25467768cc80dafc06f0713', 13240379682, '467929c1afd658065fe6685ba3622435a90cb2eaeb70c17ffd3b3685aeff46ac'),
+            ('userspace', 41655987152, 'a63fd7f884a1af7cf25467768cc80dafc06f0713', 13239672216, '3b4f78584c796ffa27b598a8b3a2bf0fa5f75a3d222ad37ce9c0339ef104feeb'),
+            ('tools', 41579299652, '498d90a683750b0826fad69be3d36626c3a0eb34', 13205248045, '8311a66ac814843dc9af2df9b723bb6c474ed67b9bfc4fa909cedbdb33b4cfb8'),
+            ('pongo', 41579299652, '498d90a683750b0826fad69be3d36626c3a0eb34', 13205093610, '0e098bcd257f92be88a4b8e93801f67016c6b8f963b0a670510111409ddd9120'),
+          ]
+          api = 'https://api.github.com/repos/stuart902/orchard'
+          header = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          def get(path):
+              with urllib.request.urlopen(urllib.request.Request(api + path, headers=header)) as r:
+                  return json.load(r)
+          for name, run, sha, artifact, digest in inputs:
+              status = get(f'/actions/runs/{run}')
+              assert status['head_sha'] == sha
+              if name in ('kernel', 'userspace'):
+                  jobs = get(f'/actions/runs/{run}/jobs')['jobs']
+                  kernel_jobs = [j for j in jobs if j['name'] == name]
+                  assert len(kernel_jobs) == 1 and kernel_jobs[0]['conclusion'] == 'success'
+              else:
+                  assert status['conclusion'] == 'success'
+              metadata = get(f'/actions/artifacts/{artifact}')
+              assert not metadata['expired'] and metadata['workflow_run']['id'] == run
+              assert metadata['digest'] == 'sha256:' + digest
+              target = root / (name + '.zip')
+              subprocess.run(['curl', '--fail', '--location', '--retry', '2', '--silent', '--show-error',
+                  '-H', 'Authorization: Bearer ' + os.environ['GH_TOKEN'],
+                  api + f'/actions/artifacts/{artifact}/zip', '-o', str(target)], check=True)
+              assert hashlib.file_digest(target.open('rb'), 'sha256').hexdigest() == digest
+              with zipfile.ZipFile(target) as z:
+                  assert all(not p.startswith('/') and '..' not in pathlib.PurePosixPath(p).parts for p in z.namelist())
+                  z.extractall(root / name)
+              target.unlink()
+          provenance = dict(kernel_commit='c40e165367f58182881c461cdbabdc0d1ff57e18',
+              orchard_base='6b5fca68c56868651113ede0063a3061d0b22914',
+              packaging_commit=os.environ['GITHUB_SHA'], platform='apple-16k', board='j71b',
+              scope='Experimental J71b capture; Linux host HP ownership assumed; no automatic capture or playback',
+              inputs=[dict(name=n, run=r, source_commit=s, artifact=a, sha256=d) for n,r,s,a,d in inputs])
+          (root / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+          PY
+          (cd out/inputs/kernel && sha256sum -c SHA256SUMS)
+          (cd out/inputs/userspace && sha256sum -c SHA256SUMS)
+          test "$(cat out/inputs/kernel/linux-source-commit.txt)" = c40e165367f58182881c461cdbabdc0d1ff57e18
+      - name: Fetch corresponding sources for reused recovery tools
+        shell: bash
+        run: |
+          printf '%s\n' 'deb-src http://deb.debian.org/debian bookworm main' 'deb-src http://deb.debian.org/debian-security bookworm-security main' > /etc/apt/sources.list.d/capture-source.list
+          apt-get update
+          python3 ci/fetch-tool-sources.py
+          tar -C out/recovery-tool-sources -czf out/recovery-tool-source.tar.gz .
+      - name: Assemble unchanged hardware-check payload with precompiled components
+        shell: bash
+        run: |
+          mkdir -p out/runtime/orchard out/unpacked out/publication
+          git archive HEAD | tar -x -C out/runtime/orchard
+          tar -xzf out/inputs/kernel/kernel-components-apple-16k.tar.gz -C out/unpacked
+          tar -xzf out/inputs/tools/tool-components.tar.gz -C out/unpacked
+          test -s out/unpacked/components/quiet/m1n1.bin
+          test -s out/unpacked/components/boot/busybox
+          tar -xzf out/inputs/pongo/quiet-pongo.tar.gz -C out/unpacked/components/quiet
+          mv out/unpacked/components out/runtime/orchard/capture-components
+          mkdir -p out/runtime/orchard/capture-userspace
+          tar -xzf out/inputs/userspace/capture-userspace.tar.gz -C out/runtime/orchard/capture-userspace
+          cp out/inputs/provenance.json out/runtime/orchard/capture-test-provenance.json
+          cp ci/capture-README.md out/runtime/README.md
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          root = Path('out/runtime/orchard')
+          paths = sorted(p for p in root.rglob('*') if p.is_file() and not p.is_symlink())
+          (root / 'BUNDLE-SHA256SUMS').write_text(''.join(
+              hashlib.file_digest(p.open('rb'), 'sha256').hexdigest() + '  ' + str(p.relative_to(root)) + '\n' for p in paths))
+          PY
+          python3 out/runtime/orchard/ci/prepare-capture-ram.py
+          # Relocation is required by the standard firmware-layer assembler.
+          # Verify a fresh location works without compiling or device access.
+          mv out/runtime out/relocated
+          python3 out/relocated/orchard/ci/prepare-capture-ram.py
+          tar -C out/relocated -czf out/publication/j71b-capture-experiment-nov3.tar.gz .
+          cp out/inputs/kernel/kernel-source-apple-16k.tar.gz out/publication/
+          cp out/inputs/pongo/pongo-source.tar.gz out/publication/
+          cp out/inputs/userspace/capture-userspace-source.tar.gz out/recovery-tool-source.tar.gz out/publication/
+          cp out/inputs/userspace/capture-binary-packages.txt out/inputs/userspace/capture-source-packages.txt out/publication/
+          cp out/inputs/provenance.json out/publication/capture-test-provenance.json
+          (cd out/publication && sha256sum *.tar.gz *.json *.txt > SHA256SUMS)
+          printf '%s\n' 'Experimental J71b capture image; precompiled kernel reused.' 'No automatic recording or playback. Host HP ownership is an assumption. No hardware test performed.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-capture-experiment-nov3
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
