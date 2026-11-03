@@ -1,4 +1,4 @@
-name: J71b power lifetime checks (no release)
+name: J71b real-kernel supplier lifetime (no release)
 on:
   workflow_dispatch:
   push:
@@ -7,61 +7,16 @@ permissions:
   contents: read
 env:
   KERNEL_SHA: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
-  BASELINE_SHA: 8e7c716c14700920c9ed6bfe150adcaae4887c1b
 jobs:
-  offline:
+  runtime:
     runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: stuart902/linux
-          ref: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
-          fetch-depth: 2
-          path: linux
-          persist-credentials: false
-      - name: Verify source and unchanged power sequences
-        run: |
-          test "$(git -C linux rev-parse HEAD)" = "$KERNEL_SHA"
-          python3 - <<'PY'
-          import pathlib, subprocess
-          path = 'drivers/power/reset/apple-d2365-poweroff.c'
-          baseline = subprocess.check_output(
-              ['git', '-C', 'linux', 'show', '8e7c716c14700920c9ed6bfe150adcaae4887c1b:' + path],
-              text=True)
-          current = (pathlib.Path('linux') / path).read_text()
-          def sequence(source):
-              return source[source.index('#define D2365_EVENTS'):
-                            source.index('static const struct of_device_id')]
-          assert sequence(current) == sequence(baseline)
-          print('Shutdown/reboot algorithms and data are byte-identical to tested 8e7c716.')
-          PY
-      - name: Run all source-tree regression checks
-        run: python3 linux/tools/testing/selftests/d2365/test_poweroff.py -v
-      - name: Verify installed selftests include the provider fixture
-        run: |
-          install="$RUNNER_TEMP/d2365-installed"
-          make -C linux/tools/testing/selftests/d2365 install INSTALL_PATH="$install"
-          mapfile -t runners < <(find "$install" -name test_poweroff.py)
-          test "${#runners[@]}" = 1
-          D2365_KERNEL_SRC="$PWD/linux" python3 "${runners[0]}" -v
-  kernel:
-    runs-on: ubuntu-24.04-arm
-    container: debian:bookworm
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        config: [orchard_apple4k_defconfig, orchard_apple16k_defconfig]
     defaults:
       run:
         shell: bash
-    env:
-      CONFIG: ${{ matrix.config }}
     steps:
-      - run: apt-get update && apt-get install -y git ca-certificates python3
       - uses: actions/checkout@v4
         with:
-          ref: 498d90a683750b0826fad69be3d36626c3a0eb34
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -70,51 +25,49 @@ jobs:
           fetch-depth: 2
           path: linux
           persist-credentials: false
-      - name: Install the existing kernel toolchain
-        run: bash kernel/install-toolchain
-      - name: Build affected objects and J71b DTB
+      - name: Install kernel and QEMU tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-arm make flex bison libssl-dev libelf-dev bc
+      - name: Add the diagnostic-only test without editing production C
         run: |
           test "$(git -C linux rev-parse HEAD)" = "$KERNEL_SHA"
           mkdir -p reports
-          out="$PWD/out"
-          make -C linux O="$out" ARCH=arm64 LLVM=-19 "$CONFIG"
-          cp "$out/.config" reports/resolved.config
-          for symbol in MFD_SIMPLE_MFD_I2C POWER_SUPPLY GPIO_APPLE_D2365 POWER_RESET_APPLE_D2365 APPLE_TRISTAR_CHARGER; do
-            grep -Fx "CONFIG_$symbol=y" "$out/.config"
-          done
-          make -C linux O="$out" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
-            drivers/power/reset/apple-d2365-poweroff.o \
-            drivers/gpio/gpio-apple-d2365.o \
-            drivers/power/supply/apple_tristar_charger.o \
-            apple/t8010-j71b.dtb
-          for object in drivers/power/reset/apple-d2365-poweroff.o drivers/gpio/gpio-apple-d2365.o drivers/power/supply/apple_tristar_charger.o; do
-            llvm-readelf-19 -h "$out/$object" | tee -a reports/elf-headers.txt
-            llvm-readelf-19 -h "$out/$object" | grep -F AArch64
-          done
-      - name: Compare binding and J71b schema diagnostics with tested baseline
-        if: matrix.config == 'orchard_apple16k_defconfig'
+          sha256sum linux/drivers/power/reset/apple-d2365-poweroff.c linux/drivers/gpio/gpio-apple-d2365.c > reports/production-source.sha256
+          cp tests/kernel/d2365-lifetime.c linux/drivers/power/reset/apple-d2365-lifetime-test.c
+          cat tests/kernel/Kconfig.d2365 >> linux/drivers/power/reset/Kconfig
+          printf '\nobj-$(CONFIG_D2365_LIFETIME_TEST) += apple-d2365-lifetime-test.o\n' >> linux/drivers/power/reset/Makefile
+      - name: Build KASAN and lockdep kernel
+        working-directory: linux
         run: |
-          apt-get install -y python3-venv python3-dev swig
-          python3 -m venv "$PWD/schema-venv"
-          source "$PWD/schema-venv/bin/activate"
-          python3 -m pip install dtschema yamllint
-          python3 -m pip freeze > reports/schema-tools.lock
-          git -C linux worktree add --detach "$PWD/baseline" "$BASELINE_SHA"
-          schemas='power/reset/apple,d2365-poweroff.yaml:mfd/apple,pmic.yaml'
-          for tree in baseline linux; do
-            out="$PWD/schema-$tree"
-            make -C "$tree" O="$out" ARCH=arm64 LLVM=-19 "$CONFIG"
-            make -C "$tree" O="$out" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
-              dt_binding_check DT_SCHEMA_FILES="$schemas" 2>&1 | tee "reports/$tree-binding.log"
-            make -C "$tree" O="$out" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
-              CHECK_DTBS=y DT_SCHEMA_FILES="$schemas" apple/t8010-j71b.dtb \
-              2>&1 | tee "reports/$tree-j71b-schema.log"
+          python3 tools/testing/kunit/kunit.py build --arch=arm64 --cross_compile=aarch64-linux-gnu- --kunitconfig=../tests/kernel/d2365.kunitconfig --jobs="$(nproc)" 2>&1 | tee ../reports/build.log
+          cp .kunit/.config ../reports/resolved.config
+          for symbol in KASAN KASAN_GENERIC PROVE_LOCKING DEBUG_ATOMIC_SLEEP SMP TRACING OF_DYNAMIC IRQ_SIM GPIO_APPLE_D2365 POWER_RESET_APPLE_D2365 D2365_LIFETIME_TEST; do
+            grep -Fx "CONFIG_$symbol=y" .kunit/.config
           done
-          echo 'Schema tools may print diagnostics without failing make. Review both logs; job success alone does not mean schema-clean.'
+      - name: Exercise real supplier removal and in-flight probe
+        working-directory: linux
+        run: |
+          for mode in off permissive; do
+            status=0
+            python3 tools/testing/kunit/kunit.py exec --arch=arm64 --cross_compile=aarch64-linux-gnu- --kunitconfig=../tests/kernel/d2365.kunitconfig --timeout=240 --qemu_args="-m 1024 -smp 2" --kernel_args="fw_devlink=$mode kasan_multi_shot panic_on_warn=1 panic=1" 'd2365-supplier-lifetime*' 2>&1 | tee "../reports/$mode-result.log" || status=$?
+            cp .kunit/test.log "../reports/$mode-console.log"
+            test "$status" = 0
+            grep -F 'three supply and one GPIO unbind/rebind cycles passed' "../reports/$mode-console.log"
+            grep -F 'real GPIO already-unbinding probe rejected and rebound' "../reports/$mode-console.log"
+            if test "$mode" = off; then
+              grep -F 'real supply already-unbinding probe rejected and rebound' "../reports/$mode-console.log"
+            fi
+            if grep -E 'BUG:|WARNING:|possible circular locking|KASAN:|sleeping function called' "../reports/$mode-console.log"; then
+              exit 1
+            fi
+          done
+          cd ..
+          sha256sum --check reports/production-source.sha256
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: j71b-lifetime-${{ matrix.config }}
+          name: d2365-real-kernel-lifetime
           path: reports/
           if-no-files-found: warn
           retention-days: 7

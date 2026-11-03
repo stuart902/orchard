@@ -1,0 +1,12 @@
+config D2365_LIFETIME_TEST
+	bool "CI-only D2365 supplier lifecycle test"
+	depends on KUNIT && OF && I2C && GPIOLIB && POWER_SUPPLY && POWER_RESET && TRACING
+	select MFD_SIMPLE_MFD_I2C
+	select GPIO_APPLE_D2365
+	select POWER_RESET_APPLE_D2365
+	select IRQ_SIM
+	select OF_DYNAMIC
+	help
+	  Test actual driver-core binding, supplier unbinding, devres release,
+	  and rebinding with synthetic OF providers. No PMIC power sequence
+	  is executed. This option is added only by the diagnostic CI harness.
