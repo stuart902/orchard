@@ -1,0 +1,123 @@
+name: J71b Apple speaker reference compile and KUnit
+on:
+  push:
+    branches: [ci/j71b-apple-speaker-nov3]
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        pages: [4k, 16k]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 958fc89f5ec15c26352ae0679c99576d931c4497
+          path: linux-draft
+          persist-credentials: false
+      - name: Verify exact source
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = 958fc89f5ec15c26352ae0679c99576d931c4497
+          test -z "$(git -C linux-draft status --porcelain)"
+          mkdir -p out
+          git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
+      - name: Install Orchard kernel toolchain
+        run: bash kernel/install-toolchain
+      - name: Compile only experimental objects using Orchard defconfig
+        run: |
+          build="$PWD/out/build"
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 orchard_apple${{ matrix.pages }}_defconfig
+          linux-draft/scripts/config --file "$build/.config" --enable EXPERT --module SND_SOC_APPLE_J71B_DIGITAL --enable KUNIT --module SND_SOC_APPLE_T8010_MCA_REFERENCE_KUNIT_TEST
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 olddefconfig
+          grep -qx 'CONFIG_SND_SOC_APPLE_J71B_DIGITAL=m' "$build/.config"
+          grep -qx 'CONFIG_SND_SOC_APPLE_T8010_MCA_REFERENCE_KUNIT_TEST=m' "$build/.config"
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" prepare modules_prepare
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" sound/soc/apple/s8000-mca.o sound/soc/apple/j71b-digital.o sound/soc/apple/t8010-mca-reference-test.o
+          cp "$build/.config" out/kernel.config
+          cp "$build/sound/soc/apple/s8000-mca.o" "$build/sound/soc/apple/j71b-digital.o" "$build/sound/soc/apple/t8010-mca-reference-test.o" out/
+          dpkg-query -W > out/toolchain-packages.lock
+          test -z "$(git -C linux-draft status --porcelain)"
+          (cd out && sha256sum *.o kernel.config linux-source-commit.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-apple-speaker-compile-${{ matrix.pages }}
+          path: |
+            out/*.o
+            out/kernel.config
+            out/linux-source-commit.txt
+            out/toolchain-packages.lock
+            out/SHA256SUMS
+          retention-days: 7
+          if-no-files-found: error
+  kunit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 958fc89f5ec15c26352ae0679c99576d931c4497
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y gcc make flex bison bc libelf-dev libssl-dev python3
+      - name: Run MCA reference KUnit tests in UML
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = 958fc89f5ec15c26352ae0679c99576d931c4497
+          printf '%s\n' CONFIG_KUNIT=y CONFIG_SOUND=y CONFIG_SND=y CONFIG_SND_SOC=y CONFIG_SND_SOC_APPLE_T8010_MCA_REFERENCE_KUNIT_TEST=y > /tmp/j71b-kunit.config
+          python3 tools/testing/kunit/kunit.py run --kunitconfig=/tmp/j71b-kunit.config --build_dir=/tmp/j71b-kunit --jobs=2 --timeout=120 2>&1 | tee /tmp/j71b-kunit.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: j71b-apple-speaker-kunit
+          path: |
+            /tmp/j71b-kunit.log
+            /tmp/j71b-kunit/.config
+          include-hidden-files: true
+          retention-days: 7
+
+  bindings:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 958fc89f5ec15c26352ae0679c99576d931c4497
+          persist-credentials: false
+      - run: |
+          python3 -m venv /tmp/schema-env
+          /tmp/schema-env/bin/pip install dtschema
+          /tmp/schema-env/bin/dt-doc-validate Documentation/devicetree/bindings/sound/apple,j71b-audio.yaml Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
+  callbacks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 958fc89f5ec15c26352ae0679c99576d931c4497
+          path: linux-draft
+          persist-credentials: false
+      - name: Test production callbacks with synthetic clocks and GPIO
+        shell: bash
+        run: |
+          export LINUX_TREE="$PWD/linux-draft"
+          export CFLAGS='-fsanitize=undefined -fno-sanitize-recover=all -Werror'
+          python3 ci/j71b-speaker/test_mca_reference.py
+          python3 -m unittest discover -s ci/j71b-speaker -p test_j71b_digital.py -v
