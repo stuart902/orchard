@@ -1,0 +1,198 @@
+name: J71b integrated power components (no release)
+on:
+  push:
+    branches: [test/j71b-power-integrated-20261103]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+env:
+  SOURCE: 1b9457c9cc17327ccd08a19a0181c28c6d6028ed
+  REUSE_SOURCE: 498d90a683750b0826fad69be3d36626c3a0eb34
+  REUSE_RUN: '41579299652'
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify exact production source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE" && git diff --exit-code
+      - run: python -m pip install -e '.[validate]' && python -m pip check
+      - run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+  kernel:
+    needs: tests
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [apple-16k, apple-4k]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+      ORCHARD_PUBLISHED: 'off'
+      ORCHARD_KERNEL: local
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE }}
+          persist-credentials: false
+      - name: Verify exact source and available disk
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git diff --exit-code
+          df -h "$PWD"
+          python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
+          echo "ORCHARD_CACHE_DIR=$PWD/out/cache" >> "$GITHUB_ENV"
+      - name: Install native kernel toolchain and checkout launcher
+        run: |
+          bash kernel/install-toolchain
+          python3 -m venv /tmp/orchard-ci
+          /tmp/orchard-ci/bin/pip install uv
+          echo /tmp/orchard-ci/bin >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@v4
+        with:
+          repository: stuart902/orchard
+          run-id: 41579299652
+          github-token: ${{ github.token }}
+          name: orchard-tools
+          path: out/reused
+      - uses: actions/download-artifact@v4
+        with:
+          repository: stuart902/orchard
+          run-id: 41579299652
+          github-token: ${{ github.token }}
+          name: orchard-pongo
+          path: out/reused
+      - name: Verify unchanged shared inputs and reuse completed components
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/stuart902/orchard.git "$REUSE_SOURCE"
+          mkdir -p out/shared/quiet
+          tar -xzf out/reused/tool-components.tar.gz -C out/shared --strip-components=1
+          tar -xzf out/reused/quiet-pongo.tar.gz -C out/shared/quiet
+          "$PWD/bin/orchard" python - <<'PYCODE'
+          import json, os, shutil, subprocess
+          from pathlib import Path
+          from orchard.build import (M1N1_INPUTS, TOOL_INPUTS, PONGO_RECIPE,
+              cached_component, component_lock, recipe_key, digest)
+          root=Path.cwd()
+          old=os.environ['REUSE_SOURCE']
+          names=sorted(set(M1N1_INPUTS + TOOL_INPUTS + PONGO_RECIPE))
+          def tree(ref):
+              return subprocess.check_output(['git','ls-tree','-r',ref,'--',*names])
+          assert tree(old) == tree('HEAD'), 'Shared component recipes changed; refuse stale reuse'
+          cache=Path(os.environ['ORCHARD_CACHE_DIR'])
+          tools=root/'out/shared/boot'
+          def reuse(stage):
+              for path in tools.iterdir():
+                  if path.is_file():
+                      shutil.copy2(path,stage/path.name)
+          with component_lock(cache):
+              cached_component(cache/'components-v2','recovery-tools',
+                               lambda: recipe_key(root, TOOL_INPUTS),reuse)
+          files={str(p.relative_to(root/'out/shared')): digest(p)
+                 for p in sorted((root/'out/shared').rglob('*')) if p.is_file()}
+          Path('out/reuse-receipt.json').write_text(json.dumps({
+              'source': old, 'run': int(os.environ['REUSE_RUN']),
+              'recipe_inputs_equal': True, 'files': files}, indent=2)+'\n')
+          print('Verified exact shared recipe identity; reusing tools, m1n1 and Pongo from run',os.environ['REUSE_RUN'])
+          PYCODE
+      - name: Build integrated kernel, all modules and DTBs with checkout launcher
+        run: |
+          "$PWD/bin/orchard" build "$PWD/examples/hardware-check" --platform "$PLATFORM" \
+            --loader "$PWD/out/shared/quiet/m1n1.bin" \
+            --pongo "$PWD/out/shared/quiet/pongo.bin" \
+            --busybox "$PWD/out/shared/boot/busybox"
+      - name: Verify resolved config, power source and component receipts
+        run: |
+          "$PWD/bin/orchard" python - <<'PYCODE'
+          import hashlib,json,os,shutil,subprocess
+          from pathlib import Path
+          from orchard import kernel, sources
+          from orchard.ram import boards_by_platform, verify_ram
+          root=Path.cwd(); platform=os.environ['PLATFORM']
+          output=root/'examples/hardware-check/out'/platform
+          receipt=verify_ram(output)
+          representative=sorted(boards_by_platform(root)[platform])[0]
+          work=kernel.work_directory(root,representative)
+          resolved=(work/'output/.config').read_bytes()
+          committed=(root/'kernel/configs'/platform/'config').read_bytes()
+          assert resolved == committed, 'olddefconfig changed committed configuration'
+          text=resolved.decode()
+          for symbol in ['OF','MFD_SIMPLE_MFD_I2C','POWER_SUPPLY','APPLE_TRISTAR_CHARGER','GPIO_APPLE_D2365','POWER_RESET_APPLE_D2365']:
+              assert f'CONFIG_{symbol}=y\n' in text, symbol
+          assert '# CONFIG_RTC_SYSTOHC is not set\n' in text
+          if platform == 'apple-16k':
+              assert 'CONFIG_NVME_APPLE=m\n' in text and 'CONFIG_UDMABUF=y\n' in text
+          else:
+              assert '# CONFIG_NVME_APPLE is not set\n' in text and '# CONFIG_UDMABUF is not set\n' in text
+          expected={'arch/arm64/boot/dts/apple/t8010-j71b.dts': '00ac228c723d38d8c3d276a8bad30b6131525ca1d7f8cebc332aacc85935d6f8', 'drivers/gpio/gpio-apple-d2365.c': '4a148591f9cbf3f5d011c8b011aa60e087f08546c4b41af651f1c251cd4568e4', 'include/linux/gpio/apple-d2365.h': 'c958b0d39cc78eaccc915dd55874ce537e02bc65db181bb3ecdb7c21502dda5b', 'Documentation/devicetree/bindings/mfd/apple,pmic.yaml': '2d5e6fea76d46f0d21c8e8ff1e9377689d1688a16e288ccde585a7088c1b09c4', 'Documentation/devicetree/bindings/power/reset/apple,d2365-poweroff.yaml': '775c7e6ee968c66f03072ec9641a56ead392aa6ae37f72238ab23660a99f09b7', 'drivers/power/reset/Kconfig': 'ba1646239443c29bc0dd12ecccc070b7650286d94463fb1023a1016400ae5b2b', 'drivers/power/reset/Makefile': 'cb4468c61e6bab543ca5d98a46f86c80995dd4a6c4e3b7a6f678a2c7f2eafdf1', 'drivers/power/reset/apple-d2365-poweroff.c': 'c7cf8dceed4cc707ff3bedb997f6a36cf384ba68a96ea87b2e5e4c49ed818354'}
+          actual={name:hashlib.sha256((work/'source'/name).read_bytes()).hexdigest() for name in expected}
+          assert actual == expected, 'Integrated production power source differs from reviewed Linux778174c'
+          bundle=Path(receipt['assembly']['kernel']).parent
+          target=root/'out/components/kernel'
+          shutil.copytree(bundle,target)
+          shutil.copytree(root/'out/shared/boot',root/'out/components/boot')
+          shutil.copytree(root/'out/shared/quiet',root/'out/components/quiet')
+          shutil.copy2(root/'out/shared/tools-toolchain-packages.lock',root/'out/components/tools-toolchain-packages.lock')
+          shutil.copy2(work/'output/.config',root/'out/components/resolved.config')
+          shutil.copy2(root/'out/reuse-receipt.json',root/'out/components/reuse-receipt.json')
+          metadata={'orchard':os.environ['SOURCE'],'upstream':'28799cf612840ec80fe76b25ffe9a866f07e4d01',
+              'platform':platform,'power_source_linux':'778174c50d5fd6b36849f9eea728a6811b1b6e9e',
+              'power_files':actual,'kernel_source_tree':sources.working_tree(work/'source'),
+              'hardware_tested':False,'config_exact':True}
+          (root/'out/components/integration-receipt.json').write_text(json.dumps(metadata,indent=2)+'\n')
+          Path('out/kernel-source-path.txt').write_text(str(work/'source'))
+          print(json.dumps(metadata,indent=2))
+          PYCODE
+          git diff --exit-code
+          dpkg-query -W > out/components/kernel-toolchain-packages.lock
+      - name: Package complete platform components and corresponding source
+        run: |
+          mkdir -p out/publication
+          "$PWD/bin/orchard" python ci/package_components.py --platform "$PLATFORM" \
+            --directory out/components --output "out/publication/$PLATFORM-components.tar.gz"
+          tar -C "$(cat out/kernel-source-path.txt)" --exclude=.git -czf "out/publication/kernel-source-$PLATFORM.tar.gz" .
+          git archive --format=tar.gz -o out/publication/orchard-source.tar.gz "$SOURCE"
+          cp out/components/integration-receipt.json out/publication/
+          cp out/reuse-receipt.json out/publication/
+          cp out/reused/pongo-source.tar.gz out/publication/
+          cp out/components/resolved.config out/publication/
+          cp "examples/hardware-check/out/$PLATFORM/build.json" out/publication/ram-build.json
+          cp "examples/hardware-check/out/$PLATFORM/commands.sh" out/publication/
+          printf '%s\n' 'Build-only validation; no device accessed. These are components, not a tested full distribution image.' > out/publication/VALIDATION.txt
+          (cd out/publication && sha256sum * > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchard-integrated-${{ matrix.platform }}
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+      - name: Preserve failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchard-integrated-failure-${{ matrix.platform }}
+          path: |
+            out/cache/kernel-work/**/output/.config
+            out/cache/kernel-work/**/applied-patches
+            out/cache/kernel-work/**/prepared-tree
+            out/reuse-receipt.json
+          if-no-files-found: ignore
+          retention-days: 2
