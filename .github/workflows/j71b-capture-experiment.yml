@@ -1,0 +1,162 @@
+name: Experimental J71b microphone kernel and capture tools
+on:
+  push:
+    branches: [ci/j71b-capture-experiment-nov3]
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv python3-dev swig libyaml-dev device-tree-compiler alsa-utils
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
+          path: linux-draft
+          persist-credentials: false
+      - name: Verify exact experimental source
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
+          test -z "$(git -C linux-draft status --porcelain)"
+          mkdir -p out
+          git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
+      - run: bash kernel/install-toolchain
+      - name: Build standard apple-16k kernel, modules and device trees
+        run: |
+          bash kernel/build apple-16k --kernel-tree "$PWD/linux-draft" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          cp out/kernel-work/output/.config out/kernel.config
+          for option in SND SND_PCM SND_SOC SND_SIMPLE_CARD SND_SOC_DMIC SND_SOC_APPLE_T8010_PDM APPLE_AOP_AUDIO APPLE_AOP_T8010 APPLE_SIO APPLE_SIO_DMA; do
+            grep -Eq "^CONFIG_${option}=(y|m)$" out/kernel.config
+          done
+          for option in MTD MTD_PHRAM OF EXPERT APPLE_RTKIT APPLE_MAILBOX PM; do
+            grep -qx "CONFIG_${option}=y" out/kernel.config
+          done
+          find out/components/kernel/lib/modules -name '*pdm*' -o -name '*aop*' -o -name '*dmic*' > out/audio-module-files.txt
+          grep -q 't8010-pdm.ko' out/audio-module-files.txt
+          grep -q 'aop-audio.ko' out/audio-module-files.txt
+          grep -q 'dmic.ko' out/audio-module-files.txt
+          test -z "$(git -C linux-draft status --porcelain)"
+      - name: Validate enabled J71b device tree
+        run: |
+          python3 -m venv /tmp/pdm-schema
+          /tmp/pdm-schema/bin/pip install dtschema
+          export PATH="/tmp/pdm-schema/bin:$PATH"
+          schemas="sound/apple,t8010-pdm.yaml:sound/simple-card.yaml:sound/dmic-codec.yaml:soc/apple/apple,t8010-aop.yaml"
+          make -C linux-draft O="$PWD/out/kernel-work/output" LLVM=-19 ARCH=arm64 DT_SCHEMA_FILES="$schemas" dt_binding_check
+          dtb=out/components/kernel/dtbs/t8010-j71b.dtb
+          dt-validate -s out/kernel-work/output/Documentation/devicetree/bindings/processed-schema.json -l 'apple,t8010-pdm|simple-card|dmic-codec|apple,t8010-aop' "$dtb" 2>out/targeted-schema-errors.txt
+          test ! -s out/targeted-schema-errors.txt
+          for node in /dmic /microphones /soc/pdm@20a0b4000 /soc/aop@210800000/aop-audio; do
+            test "$(fdtget "$dtb" "$node" status)" = okay
+          done
+          test "$(fdtget "$dtb" /sound simple-audio-card,name)" = 'J71b Speakers'
+          python3 - "$dtb" <<'PYTEST'
+          import re, subprocess, sys
+          from pathlib import Path
+          dtb = sys.argv[1]
+          def cells(node, prop):
+              return [int(v, 16) for v in subprocess.check_output(['fdtget', '-t', 'x', dtb, node, prop], text=True).split()]
+          phandle, endpoint = cells('/soc/pdm@20a0b4000', 'dmas')
+          assert phandle == cells('/soc/dma-controller@20ae00000', 'phandle')[0]
+          assert endpoint == 0x5b
+          source = Path('linux-draft/drivers/soc/apple/apple-sio-core.c').read_text()
+          table = re.search(r'apple_sio_t8010_dma_ranges\[\] = \{(.*?)\n\};', source, re.S).group(1)
+          ranges = [(int(a, 16), int(b, 16)) for a, b in re.findall(r'\{ (0x[0-9a-f]+), (0x[0-9a-f]+) \}', table)]
+          assert sum(a <= endpoint <= b for a, b in ranges) == 1
+          assert {n for a, b in ranges for n in range(a, b + 1)} == {0x1a, 0x2c, 0x5b}
+          print('Built PDM DT request resolves to the registered T8010 SmartIO endpoint')
+          PYTEST
+          cp "$dtb" out/
+      - name: Archive components, corresponding source and provenance
+        run: |
+          dpkg-query -W > out/toolchain-packages.lock
+          tar -C out -czf out/kernel-components-apple-16k.tar.gz components
+          tar -C linux-draft --exclude=.git --exclude=.orchard-out -czf out/kernel-source-apple-16k.tar.gz .
+          (cd out && sha256sum *.tar.gz *.txt kernel.config toolchain-packages.lock *.dtb > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-capture-experiment-kernel-and-tools
+          path: |
+            out/*.tar.gz
+            out/*.txt
+            out/*.lock
+            out/*.dtb
+            out/kernel.config
+            out/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+  userspace:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 alsa-utils libc6
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Stage and smoke-test licensed capture userspace
+        run: python3 ci/stage-capture-userspace.py
+      - name: Fetch exact corresponding sources
+        run: |
+          printf '%s\n' 'deb-src http://deb.debian.org/debian bookworm main' 'deb-src http://deb.debian.org/debian-security bookworm-security main' > /etc/apt/sources.list.d/capture-source.list
+          apt-get update
+          mkdir -p out/capture-sources
+          (cd out/capture-sources; while read -r source; do apt-get source --download-only "$source"; done < ../capture-source-packages.txt)
+      - name: Archive userspace separately from the kernel
+        run: |
+          tar -C out/capture-root -czf out/capture-userspace.tar.gz .
+          tar -C out/capture-sources -czf out/capture-userspace-source.tar.gz .
+          (cd out && sha256sum *.tar.gz *.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: j71b-capture-userspace
+          path: |
+            out/*.tar.gz
+            out/*.txt
+            out/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+  kunit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y gcc make flex bison bc libelf-dev libssl-dev python3
+      - name: Run audio property KUnit tests in UML
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = b1694a574a8f12b4004f269ae4cc83e6f4b8a30b
+          printf '%s\n' CONFIG_KUNIT=y CONFIG_COMPILE_TEST=y CONFIG_EXPERT=y CONFIG_NO_IOMEM=n CONFIG_SOUND=y CONFIG_SND=y CONFIG_SND_SOC=y CONFIG_APPLE_AOP_AUDIO_KUNIT_TEST=y CONFIG_SND_SOC_APPLE_T8010_PDM_KUNIT_TEST=y > /tmp/j71b-kunit.config
+          python3 tools/testing/kunit/kunit.py run --kunitconfig=/tmp/j71b-kunit.config --build_dir=/tmp/j71b-kunit --jobs=2 --timeout=120 2>&1 | tee /tmp/j71b-kunit.log
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: j71b-capture-reply-kunit
+          path: |
+            /tmp/j71b-kunit.log
+            /tmp/j71b-kunit/.config
+          include-hidden-files: true
+          retention-days: 7
