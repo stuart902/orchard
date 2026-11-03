@@ -2,7 +2,9 @@
 
 Only for iPad 6 Wi-Fi, iPad7,5 / J71b / A1893 / T8010.
 
-This uses Linux e1edc8f07f18629f426d9cad9509e5d46999d9c0. It is an experimental microphone test, not a desktop installation or an upstream-ready driver. The existing speaker path is unchanged; do not start playback. Nothing records or plays automatically.
+This uses Linux b1694a574a8f12b4004f269ae4cc83e6f4b8a30b. It is an experimental microphone test, not a desktop installation or an upstream-ready driver. The existing speaker path is unchanged; do not start playback. Nothing records or plays automatically.
+
+This r3 build corrects rejection of unused AOP SET response bytes seen before recording started in r2. It preserves the original outgoing request and strict response checks. Successful capture is still unproven.
 
 The experiment assumes Linux is the only host high-power PDM requester. Firmware-wide exclusivity is not proven. A firmware or DMA ownership failure can permanently block capture close, suspend or shutdown until a physical reset. A timeout cannot guarantee killing a task blocked in the kernel. Do not retry capture, unload drivers or unbind devices after a hang.
 
@@ -12,10 +14,10 @@ Apple firmware and factory calibration are not distributed. Orchard adds firmwar
 
 ## Prepare on the Mac
 
-First extract the downloaded GitHub artifact ZIP. It contains the runtime `j71b-capture-experiment-nov3-r2.tar.gz` plus separate source archives. In Finder, create `j71b-capture-experiment-nov3-r2` in Downloads and extract that named runtime tar.gz into the folder, so it contains `orchard/`. Do not use one of the source archives. In Mac Terminal, run:
+First extract the downloaded GitHub artifact ZIP. It contains the runtime `j71b-capture-experiment-nov3-r3.tar.gz` plus separate source archives. In Finder, create `j71b-capture-experiment-nov3-r3` in Downloads and extract that named runtime tar.gz into the folder, so it contains `orchard/`. Do not use one of the source archives. In Mac Terminal, run:
 
 ```sh
-cd "$HOME/Downloads/j71b-capture-experiment-nov3-r2/orchard"
+cd "$HOME/Downloads/j71b-capture-experiment-nov3-r3/orchard"
 ./bin/orchard python ci/prepare-capture-ram.py
 ```
 
@@ -60,12 +62,14 @@ else
 fi
 ```
 
+The ten-second duration counts received audio frames, not wall-clock time. The outer timeout normally bounds the command, but cannot end a task parked in a kernel safety wait.
+
 Speak briefly or tap near each microphone during the recording. Do not play the recording on the iPad. If the command hangs or fails, do not rerun it. Save available kernel output from a separate connection and use a physical reset if necessary.
 
 After a normal completion, inspect `ls -l /run/j71b-mic.wav`, `/proc/asound/card*/pcm*c/sub*/status` and `dmesg`. In a separate Mac terminal, retrieve the recording and kernel log before restarting:
 
 ```sh
-cd "$HOME/Downloads/j71b-capture-experiment-nov3-r2/orchard"
+cd "$HOME/Downloads/j71b-capture-experiment-nov3-r3/orchard"
 ./bin/orchard pull /run/j71b-mic.wav "$HOME/Downloads/j71b-mic.wav"
 ./bin/orchard exec -- dmesg > "$HOME/Downloads/j71b-capture-dmesg.txt"
 ```
