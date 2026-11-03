@@ -1,7 +1,7 @@
 name: Temporary audio SIO kernel build
 on:
   push:
-    branches: [ci/audio-sio-4d80a6b-test]
+    branches: [ci/audio-sio-4d80a6b-4k-test]
 permissions:
   contents: read
 jobs:
@@ -35,23 +35,23 @@ jobs:
           git -C linux-draft rev-parse HEAD | tee out/linux-source-commit.txt
       - name: Install kernel toolchain
         run: bash kernel/install-toolchain
-      - name: Build apple-16k kernel, modules and device trees
+      - name: Build apple-4k kernel, modules and device trees
         run: |
-          bash kernel/build apple-16k --kernel-tree "$PWD/linux-draft" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          bash kernel/build apple-4k --kernel-tree "$PWD/linux-draft" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
           dpkg-query -W > out/kernel-toolchain-packages.lock
           test "$(git -C linux-draft rev-parse HEAD)" = "$(cat out/linux-source-commit.txt)"
           test -z "$(git -C linux-draft status --porcelain)"
       - name: Archive build and provenance
         run: |
-          tar -C out -czf out/kernel-components-apple-16k.tar.gz components
-          tar -C linux-draft --exclude=.git --exclude=.orchard-out -czf out/kernel-source-apple-16k.tar.gz .
-          (cd out && sha256sum kernel-components-apple-16k.tar.gz kernel-source-apple-16k.tar.gz linux-source-commit.txt > SHA256SUMS)
+          tar -C out -czf out/kernel-components-apple-4k.tar.gz components
+          tar -C linux-draft --exclude=.git --exclude=.orchard-out -czf out/kernel-source-apple-4k.tar.gz .
+          (cd out && sha256sum kernel-components-apple-4k.tar.gz kernel-source-apple-4k.tar.gz linux-source-commit.txt > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-sio-4d80a6b-apple-16k
+          name: audio-sio-4d80a6b-apple-4k
           path: |
-            out/kernel-components-apple-16k.tar.gz
-            out/kernel-source-apple-16k.tar.gz
+            out/kernel-components-apple-4k.tar.gz
+            out/kernel-source-apple-4k.tar.gz
             out/linux-source-commit.txt
             out/kernel-toolchain-packages.lock
             out/SHA256SUMS
