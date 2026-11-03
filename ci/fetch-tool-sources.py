@@ -30,6 +30,8 @@ for name, item in lock.items():
 subprocess.run(['apt-get', 'source', '--download-only', 'musl=1.2.3-1'], cwd=root, check=True)
 import tarfile
 for archive in root.glob('musl_*.orig.tar.*'):
+    if not archive.name.endswith(('.tar.gz', '.tar.bz2', '.tar.xz')):
+        continue
     with tarfile.open(archive) as tar:
         notices = [m for m in tar.getmembers() if m.name.endswith('/COPYRIGHT') and m.isfile()]
         if len(notices) != 1:
