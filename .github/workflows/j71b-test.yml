@@ -1,4 +1,4 @@
-name: J71b real-kernel supplier lifetime (no release)
+name: J71b SPDX regression checks (no release)
 on:
   workflow_dispatch:
   push:
@@ -6,68 +6,55 @@ on:
 permissions:
   contents: read
 env:
-  KERNEL_SHA: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
+  KERNEL_SHA: 9fcc0ed563f59392e8834b0691cd21b51dc45242
+  BASELINE_SHA: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
 jobs:
-  runtime:
+  offline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
           repository: stuart902/linux
-          ref: 778174c50d5fd6b36849f9eea728a6811b1b6e9e
+          ref: 9fcc0ed563f59392e8834b0691cd21b51dc45242
           fetch-depth: 2
-          path: linux
           persist-credentials: false
-      - name: Install kernel and QEMU tools
+      - name: Verify exact source and comment-only change
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-arm make flex bison libssl-dev libelf-dev bc
-      - name: Add the diagnostic-only test without editing production C
+          test "$(git rev-parse HEAD)" = "$KERNEL_SHA"
+          python3 - <<'PY'
+          import ast, os, pathlib, subprocess
+          path = 'tools/testing/selftests/d2365/test_poweroff.py'
+          baseline = subprocess.check_output(
+              ['git', 'show', os.environ['BASELINE_SHA'] + ':' + path], text=True)
+          current = pathlib.Path(path).read_text()
+          added = '# SPDX-License-Identifier: GPL-2.0-only\n'
+          assert current.splitlines()[1] == added.rstrip('\n')
+          assert current.replace(added, '', 1) == baseline
+          assert ast.dump(ast.parse(current)) == ast.dump(ast.parse(baseline))
+          changed = subprocess.check_output(
+              ['git', 'diff', '--name-only', os.environ['BASELINE_SHA'], 'HEAD'],
+              text=True).splitlines()
+          assert changed == [path], changed
+          print('Exact SPDX-only diff; Python AST and all production files unchanged.')
+          PY
+      - name: Run source-tree selftests
+        run: make -C tools/testing/selftests/d2365 run_tests
+      - name: Run installed selftests and missing-source skip
         run: |
-          test "$(git -C linux rev-parse HEAD)" = "$KERNEL_SHA"
-          mkdir -p reports
-          sha256sum linux/drivers/power/reset/apple-d2365-poweroff.c linux/drivers/gpio/gpio-apple-d2365.c > reports/production-source.sha256
-          cp tests/kernel/d2365-lifetime.c linux/drivers/power/reset/apple-d2365-lifetime-test.c
-          cat tests/kernel/Kconfig.d2365 >> linux/drivers/power/reset/Kconfig
-          printf '\nobj-$(CONFIG_D2365_LIFETIME_TEST) += apple-d2365-lifetime-test.o\n' >> linux/drivers/power/reset/Makefile
-      - name: Build KASAN and lockdep kernel
-        working-directory: linux
+          install="$RUNNER_TEMP/d2365-spdx-installed"
+          make -C tools/testing/selftests/d2365 install INSTALL_PATH="$install"
+          mapfile -t runners < <(find "$install" -name test_poweroff.py)
+          test "${#runners[@]}" = 1
+          D2365_KERNEL_SRC="$PWD" python3 "${runners[0]}" -v
+          set +e
+          env -u D2365_KERNEL_SRC python3 "${runners[0]}"
+          status=$?
+          set -e
+          test "$status" = 4
+      - name: Check the new patch excluding human DCO
         run: |
-          python3 tools/testing/kunit/kunit.py build --arch=arm64 --cross_compile=aarch64-linux-gnu- --kunitconfig=../tests/kernel/d2365.kunitconfig --jobs="$(nproc)" 2>&1 | tee ../reports/build.log
-          cp .kunit/.config ../reports/resolved.config
-          for symbol in KASAN KASAN_GENERIC PROVE_LOCKING DEBUG_ATOMIC_SLEEP SMP TRACING OF_DYNAMIC IRQ_SIM GPIO_APPLE_D2365 POWER_RESET_APPLE_D2365 D2365_LIFETIME_TEST; do
-            grep -Fx "CONFIG_$symbol=y" .kunit/.config
-          done
-      - name: Exercise real supplier removal and in-flight probe
-        working-directory: linux
-        run: |
-          for mode in off permissive; do
-            status=0
-            python3 tools/testing/kunit/kunit.py exec --arch=arm64 --cross_compile=aarch64-linux-gnu- --kunitconfig=../tests/kernel/d2365.kunitconfig --timeout=240 --qemu_args="-m 1024 -smp 2" --kernel_args="fw_devlink=$mode kasan_multi_shot panic_on_warn=1 panic=1" 'd2365-supplier-lifetime*' 2>&1 | tee "../reports/$mode-result.log" || status=$?
-            cp .kunit/test.log "../reports/$mode-console.log"
-            test "$status" = 0
-            grep -F 'three supply and one GPIO unbind/rebind cycles passed' "../reports/$mode-console.log"
-            grep -F 'real GPIO already-unbinding probe rejected and rebound' "../reports/$mode-console.log"
-            if test "$mode" = off; then
-              grep -F 'real supply already-unbinding probe rejected and rebound' "../reports/$mode-console.log"
-            fi
-            if grep -E 'BUG:|WARNING:|possible circular locking|KASAN:|sleeping function called' "../reports/$mode-console.log"; then
-              exit 1
-            fi
-          done
-          cd ..
-          sha256sum --check reports/production-source.sha256
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: d2365-real-kernel-lifetime
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
+          git show --format=email "$KERNEL_SHA" | ./scripts/checkpatch.pl --no-signoff -
