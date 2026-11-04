@@ -15,7 +15,7 @@ env:
   OMARCHY_SHA: c052c02c36649b496bd9a8a48cc4315622338fdd
 concurrency:
   group: j71b-exact-image-recovery-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   hardware-ready:
     runs-on: ubuntu-24.04
@@ -109,6 +109,7 @@ jobs:
     env:
       ORCHARD_BUILD_NATIVE: '1'
       ORCHARD_BUILD_ENV_ID: archlinuxarm-1db43d1-desktop-and-system
+      ORCHARD_CHECKOUT: ${{ github.workspace }}/.orchard
     steps:
       - uses: actions/checkout@v4
         with:
