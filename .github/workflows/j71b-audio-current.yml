@@ -112,9 +112,13 @@ jobs:
           python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
           echo "ORCHARD_CACHE_DIR=$PWD/out/cache" >> "$GITHUB_ENV"
           python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
       - name: Install native kernel toolchain and checkout launcher
         run: |
           bash kernel/install-toolchain
+          python3 -c 'import inspect, tarfile; assert "filter" in inspect.signature(tarfile.TarFile.extractall).parameters'
           python3 -m venv /tmp/orchard-ci
           /tmp/orchard-ci/bin/pip install uv
           echo /tmp/orchard-ci/bin >> "$GITHUB_PATH"
