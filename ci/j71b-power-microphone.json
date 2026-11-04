@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "kernel_commit": "38939748c8eba9c3331bfc6b5ac22c72e217499a",
+  "kernel_tree": "57651acc30e6717b762a5cfd38d67f0d0e4eecdf",
+  "production_orchard": "a68aae672613176d203d4a3823f03f929bc84f5c",
+  "production_kernel_tree": "317bf8b7f76b780cd5b74d4463718d2e9efe77cb",
+  "power_linux": "778174c50d5fd6b36849f9eea728a6811b1b6e9e",
+  "microphone_linux": "c410dc9c3f61fa12ca54c8fbf77f3e182e4e8d5f",
+  "localversion": "-j71b-power-mic-nov4-r1",
+  "power_files": {
+    "Documentation/devicetree/bindings/mfd/apple,pmic.yaml": "2d5e6fea76d46f0d21c8e8ff1e9377689d1688a16e288ccde585a7088c1b09c4",
+    "Documentation/devicetree/bindings/power/reset/apple,d2365-poweroff.yaml": "775c7e6ee968c66f03072ec9641a56ead392aa6ae37f72238ab23660a99f09b7",
+    "drivers/gpio/gpio-apple-d2365.c": "4a148591f9cbf3f5d011c8b011aa60e087f08546c4b41af651f1c251cd4568e4",
+    "drivers/power/reset/Kconfig": "ba1646239443c29bc0dd12ecccc070b7650286d94463fb1023a1016400ae5b2b",
+    "drivers/power/reset/Makefile": "cb4468c61e6bab543ca5d98a46f86c80995dd4a6c4e3b7a6f678a2c7f2eafdf1",
+    "drivers/power/reset/apple-d2365-poweroff.c": "c7cf8dceed4cc707ff3bedb997f6a36cf384ba68a96ea87b2e5e4c49ed818354",
+    "include/linux/gpio/apple-d2365.h": "c958b0d39cc78eaccc915dd55874ce537e02bc65db181bb3ecdb7c21502dda5b",
+    "tools/testing/selftests/Makefile": "8a589beac540842fca31f612f310e6d9be6a045bdf776dd67210373d515bc470",
+    "tools/testing/selftests/d2365/Makefile": "59c433d4477a78f50b5977bc866685487d9fce57e60383bd2b7fbdc523896ba6",
+    "tools/testing/selftests/d2365/README": "2c0920adab9e5b5805ed96d14f63d9abcd09e45937752bebb2f2edb82816f112",
+    "tools/testing/selftests/d2365/checks.c": "f3b8455f4c45df88471d37c0080e3f34e326da32e069c70231dc88df935ab1fb",
+    "tools/testing/selftests/d2365/mock.h": "22df9bc2dcf81d466da8308523755585e0daba2fb6f17b991635371dd8134b61",
+    "tools/testing/selftests/d2365/probe.c": "d123370f320ad68ca6dd4960dd9e1b7a044f12f9882650ddc15a582aeef79dab",
+    "tools/testing/selftests/d2365/test_poweroff.py": "dc566b73ac8f5edae35f55823694c77aa9e9fc37b41e4d516a91dc6b6b5da7c5"
+  },
+  "microphone_files": {
+    "Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml": "6486119e0733916e03cbe9a9e496b6a4795a51212e915ca63749f49722caab0a",
+    "Documentation/devicetree/bindings/sound/apple,t8010-pdm.yaml": "51d30d50f1ffe179689aed9e699406e869887673deef81a8e59b0f8881388d8e",
+    "drivers/dma/apple-sio-dma.c": "dd70fbad400accf5470b2e29e47d2ea6d90121312aeb9d6b7b763d07aa311829",
+    "drivers/soc/apple/Kconfig": "946656f9901d64e7cf024c8b159dd03878d4cce9c8edc8b13624e112e97dc203",
+    "drivers/soc/apple/Makefile": "af85be5a1b721af46cd3510ccfc4a203629f515586c4b1b89ac8202cfd3373c8",
+    "drivers/soc/apple/aop-audio-clock.h": "c41141590c29a7e55762deb9b71244ed8a24e980a725cb4e0306899a9b3ce97a",
+    "drivers/soc/apple/aop-audio-protocol.h": "94523684049d578f2a1c6569a98c1727f17fb742ad33d76cb66588c0eece3487",
+    "drivers/soc/apple/aop-audio-test.c": "3e087fbfac1a6aea15d7d35a4370ecdd0afb4a280ed3a87139580fe8a2abbbed",
+    "drivers/soc/apple/aop-audio.c": "425c06a203259c1065cee5d381fb3df7a6579222d6de2a96d9f68ae6cc670811",
+    "drivers/soc/apple/aop.c": "abf10cc20c3bbb17ce60473a92c6c1ece1f3d028655c742396ab730becafd738",
+    "drivers/soc/apple/apple-sio-core.c": "fe4cdeb1affcf25f316af16ea8414cefdb133bbbbcc56af5b1c8b91439342adf",
+    "include/linux/soc/apple/aop-audio.h": "288fa05cd85b89d1168305d1ef06af8f04bb27d60834e407e3d3a00212a7cf92",
+    "include/linux/soc/apple/aop.h": "e07ccc6faacc98b4ac9a03dd111046f6cc14be63671b949bda0e5a38f6fa49b4",
+    "include/linux/soc/apple/sio.h": "2ae1700f72b2212f07a8684a2d38bdb820b46c583d9f33901d95b16a62a7562f",
+    "sound/soc/apple/Kconfig": "8d4d1a5d2658f53c8ea57846b219f204cad5ed601bde5139e82f181ef4915563",
+    "sound/soc/apple/Makefile": "9843cd86aeac14fb5881f31dac022b3f45c6f0cd496bda929894bb4bd03da86e",
+    "sound/soc/apple/s8000-mca.c": "b8bb19e9ba7eb912c5dde7f0a8c9c55bb90d21c88e3d9626d7b6de4bdf6a66d7",
+    "sound/soc/apple/t8010-pdm-adt.h": "3ccea501ef3ffe8ee0bee2b5d093d3d3cff5ce50c89a10a972b0fa38536fdf18",
+    "sound/soc/apple/t8010-pdm-test.c": "42b56bea4ef53d592d421d19b82847c49536bde31207f9432e2e4a0c852cd8cc",
+    "sound/soc/apple/t8010-pdm.c": "1a747020770d844a0b16adbc7a4f26becc3f1f8df641268925d87fda47aa9c2f",
+    "sound/soc/apple/t8010-pdm.h": "ac78657f65f140449153b8aff3f78397f3a292c2b299819b880c3c542fa7204b"
+  },
+  "production_restore": [
+    {
+      "path": "Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml",
+      "production_mode": "100644",
+      "production_blob": "14726afa020823a2edeae60dff8d757f1e223506",
+      "candidate_blob": "82838cbf2599782f382ceaaa59ed703d8bc388d5"
+    },
+    {
+      "path": "Documentation/devicetree/bindings/sound/apple,t8010-pdm.yaml",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "cdd08f71e146e3207cd8be6119af2fe35518432d"
+    },
+    {
+      "path": "arch/arm64/boot/dts/apple/t8010-j71b.dts",
+      "production_mode": "100644",
+      "production_blob": "edb9f51a7653b8d65fd80e42d1dced7255988b27",
+      "candidate_blob": "557de96acbde074ca49b8e5890292a30c406287f"
+    },
+    {
+      "path": "arch/arm64/configs/orchard_apple16k_defconfig",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "f0548c6985a1c40c84072980ba7281cf66360884"
+    },
+    {
+      "path": "arch/arm64/configs/orchard_apple4k_defconfig",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "997bef795c364ac90c4bd7f21e978f5ca8d7b3c6"
+    },
+    {
+      "path": "drivers/dma/apple-sio-dma.c",
+      "production_mode": "100644",
+      "production_blob": "aa304dc66832530ba5a21f3ab9660f8c7443faee",
+      "candidate_blob": "a194ec1a09c9b9a7621bbeb9430e07b7b8f0d1f2"
+    },
+    {
+      "path": "drivers/soc/apple/Kconfig",
+      "production_mode": "100644",
+      "production_blob": "e68a49f1b4d40e259ce5394ea19efc0c52f58902",
+      "candidate_blob": "a11ee5a2a084e13a577c290fbbc06741a65965af"
+    },
+    {
+      "path": "drivers/soc/apple/Makefile",
+      "production_mode": "100644",
+      "production_blob": "f99975cc639f7112a3641f4740a700f632db0df0",
+      "candidate_blob": "413f932a4b156ea17a0d0eab7823b69b21c72c90"
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio-clock.h",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "f6184ab349c6c8672fde91bd8be0e525d0828f75"
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio-protocol.h",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "7e70cdd792cf70f5497c01a2f090f591733eb19e"
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio-test.c",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "266d8b594186ff0e4d5a260b4431117cd43fea41"
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio.c",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "571d021ca6efb4ac3fef24d352b85529084f7935"
+    },
+    {
+      "path": "drivers/soc/apple/aop.c",
+      "production_mode": "100644",
+      "production_blob": "e8ae90098573d91fca50b54c4125f40fee3c15f0",
+      "candidate_blob": "620dc1929b3fc9bcbd770225642be721a68049f1"
+    },
+    {
+      "path": "drivers/soc/apple/apple-sio-core.c",
+      "production_mode": "100644",
+      "production_blob": "20d135e6a73495a714f6faa4dcd6267502a7c456",
+      "candidate_blob": "3d4004dd679db60b56eefa57d28a108d7354ceaa"
+    },
+    {
+      "path": "include/linux/soc/apple/aop-audio.h",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "87025e0dd6f71c2002f411ffaa9922f0cd6b97c1"
+    },
+    {
+      "path": "include/linux/soc/apple/aop.h",
+      "production_mode": "100644",
+      "production_blob": "8c8bc71b66a091735d96b29a8275bb7d06440f13",
+      "candidate_blob": "dab3d123f7924d9857c1361c64560f91ade6e282"
+    },
+    {
+      "path": "include/linux/soc/apple/sio.h",
+      "production_mode": "100644",
+      "production_blob": "c9e0a29b1f23584a9b5dedeb0bd90abd2b78a755",
+      "candidate_blob": "94535942077e953819fed71f160c657aa92febc5"
+    },
+    {
+      "path": "sound/soc/apple/Kconfig",
+      "production_mode": "100644",
+      "production_blob": "0e9d36cf9607083da8591b58064fa171d9957b41",
+      "candidate_blob": "223bcb6d04f6ff61e97d86ec03847e5387633d34"
+    },
+    {
+      "path": "sound/soc/apple/Makefile",
+      "production_mode": "100644",
+      "production_blob": "0058680040a380b4011c3a96ca9fcaeb636ab385",
+      "candidate_blob": "3829f0e729d40216a87dfd422696f15063c2a5b2"
+    },
+    {
+      "path": "sound/soc/apple/s8000-mca.c",
+      "production_mode": "100644",
+      "production_blob": "eae2e89a5564a261c3a3c0bbee4d79230b3532d0",
+      "candidate_blob": "d6bde1d454ab7a6661dce90e4f482156abcf5ad0"
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm-adt.h",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "eba349bc662f0f78affc223f80a1e4226b23c85a"
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm-test.c",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "c31cca61c1d31fe5fd93ccb6def31af0badd3752"
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm.c",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "18c8b49c97c583d8e37214391dbd4b97f83646c0"
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm.h",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "577ab60e9a1e762f5e711e09213935cccc53c7af"
+    },
+    {
+      "path": "tools/testing/selftests/Makefile",
+      "production_mode": "100644",
+      "production_blob": "2d960626750e3e308e9665db9ea379ac33ac50b5",
+      "candidate_blob": "1c363dbc7258e903a56c6107dbf73f4bcf2e9e5c"
+    },
+    {
+      "path": "tools/testing/selftests/d2365/Makefile",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "f8ed14efda98fc2a9ad217bbc2ed8ff77eacddef"
+    },
+    {
+      "path": "tools/testing/selftests/d2365/README",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "ed7892d6ac311a3d24406c3d0324d220fb03b9e9"
+    },
+    {
+      "path": "tools/testing/selftests/d2365/checks.c",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "1b45fa6d445febd3c971d7ebb1da4865c78d3bab"
+    },
+    {
+      "path": "tools/testing/selftests/d2365/mock.h",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "60d613c5e41f9537453efa1a07692264ecb4c01c"
+    },
+    {
+      "path": "tools/testing/selftests/d2365/probe.c",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "c7bc221fa7ea67c04582f9a41b5f8741bed33098"
+    },
+    {
+      "path": "tools/testing/selftests/d2365/test_poweroff.py",
+      "production_mode": "000000",
+      "production_blob": null,
+      "candidate_blob": "a48656e33158030ef8d2d4736e4f232c042723db"
+    }
+  ],
+  "hardware_tested": false
+}
