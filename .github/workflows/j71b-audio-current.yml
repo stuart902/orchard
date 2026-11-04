@@ -1,0 +1,179 @@
+name: J71b current audio components (no release)
+on:
+  push:
+    branches: [ci/j71b-audio-current-nov4]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: j71b-audio-current-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  LINUX_COMMIT: 6af872e1ca0ecfd8eb0c6b5f21bed1c964d45b48
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e '.[validate]' && python -m pip check
+      - run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+      - run: python ci/test-audit-audio-current.py
+      - run: python ci/test-stage-audio-current.py
+  config-4k:
+    needs: tests
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: ${{ env.LINUX_COMMIT }}
+          path: linux
+          persist-credentials: false
+      - run: bash kernel/install-toolchain
+      - name: Source audit and real 4K configuration/object checks
+        env:
+          LINUX_TREE: ${{ github.workspace }}/linux
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD/linux"
+          python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT"
+          python3 ci/test-mca-xrun.py
+          mkdir -p out/4k
+          make -C linux O="$PWD/out/4k" ARCH=arm64 LLVM=-19 orchard_apple4k_defconfig
+          python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT" \
+            --config out/4k/.config --baseline-config kernel/configs/apple-4k/config --pages 4k --output out/4k-config-receipt.json
+          make -C linux O="$PWD/out/4k" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
+            drivers/soc/apple/aop.o drivers/soc/apple/aop-audio.o drivers/soc/apple/apple-sio-core.o \
+            drivers/dma/apple-sio-dma.o sound/soc/apple/t8010-pdm.o sound/soc/apple/s8000-mca.o sound/soc/codecs/max98357a.o
+          cp out/4k/.config out/resolved-4k.config
+          dpkg-query -W > out/toolchain-4k.lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchard-audio-current-4k-checks
+          path: |
+            out/4k-config-receipt.json
+            out/resolved-4k.config
+            out/toolchain-4k.lock
+          if-no-files-found: error
+          retention-days: 14
+  kernel:
+    needs: tests
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+      ORCHARD_KERNEL: local
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv curl
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: ${{ env.LINUX_COMMIT }}
+          path: linux
+          persist-credentials: false
+      - name: Verify source and disk space
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD"
+          git config --global --add safe.directory "$PWD/linux"
+          df -h "$PWD"
+          python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
+          echo "ORCHARD_CACHE_DIR=$PWD/out/cache" >> "$GITHUB_ENV"
+          python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT"
+      - name: Install native kernel toolchain and checkout launcher
+        run: |
+          bash kernel/install-toolchain
+          # The host setup-python binary targets Ubuntu glibc; use a portable
+          # managed Python inside bookworm without changing the kernel toolchain.
+          /usr/bin/python3 -m venv /tmp/orchard-bootstrap
+          /tmp/orchard-bootstrap/bin/pip install uv==0.13.7
+          /tmp/orchard-bootstrap/bin/uv python install 3.14
+          /tmp/orchard-bootstrap/bin/uv venv --python 3.14 /tmp/orchard-ci
+          /tmp/orchard-ci/bin/python -c 'import inspect, tarfile; assert "filter" in inspect.signature(tarfile.TarFile.extractall).parameters'
+          echo /tmp/orchard-bootstrap/bin >> "$GITHUB_PATH"
+          echo /tmp/orchard-ci/bin >> "$GITHUB_PATH"
+          echo "UV_PYTHON=/tmp/orchard-ci/bin/python" >> "$GITHUB_ENV"
+          mkdir -p out
+          /tmp/orchard-ci/bin/python -VV > out/python-runtime.txt
+          /tmp/orchard-bootstrap/bin/uv --version >> out/python-runtime.txt
+          /tmp/orchard-bootstrap/bin/uv python list --only-installed >> out/python-runtime.txt
+      - name: Reuse exact published boot tools and corresponding sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/stage-audio-current.py reuse
+      - name: Build one full 16K kernel, modules, DTBs and RAM assembly
+        run: |
+          "$PWD/bin/orchard" build "$PWD/examples/hardware-check" --platform apple-16k \
+            --kernel-tree "$PWD/linux" --loader "$PWD/out/components/quiet/m1n1.bin" \
+            --pongo "$PWD/out/components/quiet/pongo.bin" --busybox "$PWD/out/components/boot/busybox" --explain
+      - name: Audit actual components and package corresponding sources
+        run: |
+          set -euo pipefail
+          "$PWD/bin/orchard" python ci/stage-audio-current.py stage --expected-commit "$LINUX_COMMIT"
+          dpkg-query -W > out/components/kernel-toolchain-packages.lock
+          mkdir -p out/publication
+          python3 ci/package_components.py --platform apple-16k --directory out/components \
+            --output out/publication/apple-16k-components.tar.gz
+          git -C linux archive --format=tar.gz -o "$PWD/out/publication/kernel-source-apple-16k.tar.gz" HEAD
+          git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
+          cp out/reused/orchard-source.tar.gz out/publication/reused-orchard-source.tar.gz
+          cp out/reused/tool-components.tar.gz out/publication/reused-tool-components.tar.gz
+          cp out/reused/pongo-source.tar.gz out/reused/recovery-tool-source.tar.gz out/publication/
+          cp out/components/quiet/m1n1.bin out/components/quiet/pongo.bin out/publication/
+          cp out/components/integration-receipt.json out/components/reuse-receipt.json out/publication/
+          cp out/components/resolved.config out/publication/resolved-16k.config
+          cp examples/hardware-check/out/apple-16k/commands.sh out/publication/build-commands.sh
+          python3 ci/export-audio-loader-source.py
+          cp ci/AUDIO-TEST-README.txt out/publication/README.txt
+          cp out/python-runtime.txt out/publication/
+          (cd out/publication && sha256sum * > SHA256SUMS)
+      - name: Attest public test components
+        if: toJSON(github.event.repository.private) == 'false'
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: out/publication/*
+      - name: Preserve public attestation bundle
+        if: toJSON(github.event.repository.private) == 'false'
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" out/publication/orchard-build.sigstore.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchard-audio-current-components
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14

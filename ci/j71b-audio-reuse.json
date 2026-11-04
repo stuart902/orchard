@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "repository": "OrchardLinux/orchard",
+  "tag": "nightly-20261104-d214e537e60a",
+  "commit": "d214e537e60a901b1e746974d4ec93fea1b9e041",
+  "assets": {
+    "component-keys.json": {
+      "id": 709228268,
+      "bytes": 630,
+      "sha256": "241b3e312a415506400235e636ff4513e8a01489b128ca1e2fcb09f4c7edc918",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/component-keys.json"
+    },
+    "m1n1.bin": {
+      "id": 709228910,
+      "bytes": 1277952,
+      "sha256": "2d3fac95cf45ce900a7da90ff9f8cd59b8818dc8228375c8a2258834361c560b",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/m1n1.bin"
+    },
+    "orchard-source.tar.gz": {
+      "id": 709229072,
+      "bytes": 1809013,
+      "sha256": "abb18d77041027fc9fec034e4af95a511678a74f790ae453b0fc634cbceae8cd",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/orchard-source.tar.gz"
+    },
+    "pongo-source.tar.gz": {
+      "id": 709229076,
+      "bytes": 25023034,
+      "sha256": "73b3854367a464c028299f2e9653cf81cd08165e52d939fd51154045b7f0ed7e",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/pongo-source.tar.gz"
+    },
+    "pongo.bin": {
+      "id": 709229105,
+      "bytes": 238096,
+      "sha256": "6cc34754c9a0f183b5ec7900e28396b414e62900da4ab571585bf82b9b04be06",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/pongo.bin"
+    },
+    "SHA256SUMS": {
+      "id": 709228266,
+      "bytes": 1076,
+      "sha256": "4b8ae87af0771a929955682a5ee7619253be3a956a4a1755068b47a3df1f32a9",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/SHA256SUMS"
+    },
+    "tool-components.tar.gz": {
+      "id": 709229180,
+      "bytes": 2735773,
+      "sha256": "e07317904e2d7ae7d0aeb23ea5a7edfbb06d8ccc1cc919e9834d5ae493218f0c",
+      "url": "https://github.com/OrchardLinux/orchard/releases/download/nightly-20261104-d214e537e60a/tool-components.tar.gz"
+    }
+  }
+}
