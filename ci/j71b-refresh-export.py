@@ -40,9 +40,12 @@ remote_main = run("git", "ls-remote", "https://github.com/OrchardLinux/orchard.g
 assert remote_main == SOURCE, ("upstream advanced; refresh the source pin", remote_main)
 assert git(workspace, "rev-parse", "origin/main") == SOURCE
 run("git", "-C", orchard, "switch", "-c", "j71b-orchard-export-review")
-run("git", "clone", "--depth=1", "--no-checkout", "https://github.com/OrchardLinux/linux.git", linux)
+# Regenerate fetches the declared public upstreams. Do not carry an unrelated
+# shallow boundary from the separately published generated Linux main.
+run("git", "init", linux)
+run("git", "-C", linux, "remote", "add", "origin", "https://github.com/OrchardLinux/linux.git")
 run("git", "clone", "--no-checkout", "https://github.com/OrchardLinux/m1n1.git", m1n1)
-# Keep regeneration away from a checked-out branch; these are disposable clones.
+# Keep regeneration away from a checked-out branch; these repositories are disposable.
 run("git", "-C", linux, "symbolic-ref", "HEAD", "refs/heads/export-workspace")
 run("git", "-C", m1n1, "symbolic-ref", "HEAD", "refs/heads/export-workspace")
 
