@@ -1,0 +1,229 @@
+name: J71b microphone-only desktop hardware (no release)
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/j71b-microphone-desktop-nov3]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Check release version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
+      - name: Check release notes
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ci/release-notes "$TAG" >/dev/null
+      # orchard runs from its checkout: the hardware data and recipes are files beside src/.
+      # jsonschema validates manifests in tests and release CI; the core needs none (tests/test_core.py).
+      - run: python -m pip install -e '.[validate]' && python -m pip check
+      - run: python -m unittest discover -s tests -v
+  native-smoke:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: ubuntu-24.04-arm-smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Compile and execute through the native recipe runner
+        run: |
+          mkdir -p out/native-source out/native-output
+          printf 'int main(void) { return 0; }\n' > out/native-source/test.c
+          # shellcheck disable=SC2016
+          python src/orchard/buildenv.py run --image unused-native \
+            --bind "$PWD/out/native-source:/src:ro" --bind "$PWD/out/native-output:/out:rw" --cwd /src -- \
+            bash -euc 'cc "$ORCHARD_SRC/test.c" -o "$ORCHARD_OUT/test"; "$ORCHARD_OUT/test"'
+          test -s out/native-output/test
+  kernel:
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    needs: native-smoke
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    strategy:
+      matrix:
+        # Every platform with a kernel series; distribution releases cover all of them.
+        platform: [apple-16k]
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 gcc device-tree-compiler
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout exact test kernel
+        uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: c410dc9c3f61fa12ca54c8fbf77f3e182e4e8d5f
+          path: linux
+          persist-credentials: false
+      - name: Verify source revision
+        run: test "$(git -C linux rev-parse HEAD)" = c410dc9c3f61fa12ca54c8fbf77f3e182e4e8d5f
+      # Recipes need only Debian's python3 and its standard library.
+      - name: Install the kernel toolchain
+        run: bash kernel/install-toolchain
+      - name: Build the platform kernel, modules and all device trees once
+        run: |
+          bash kernel/build "$PLATFORM" --kernel-tree "$PWD/linux" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          cp out/kernel-work/output/.config out/components/kernel.config
+          for option in SND SND_PCM SND_SOC SND_SIMPLE_CARD SND_SOC_DMIC SND_SOC_MAX98357A SND_SOC_APPLE_T8010_PDM APPLE_AOP_AUDIO APPLE_AOP_T8010 APPLE_SIO APPLE_SIO_DMA; do
+            grep -Eq "^CONFIG_${option}=(y|m)$" out/components/kernel.config
+          done
+          for option in MTD MTD_PHRAM OF EXPERT APPLE_RTKIT APPLE_MAILBOX PM; do
+            grep -qx "CONFIG_${option}=y" out/components/kernel.config
+          done
+          dtb=out/components/kernel/dtbs/t8010-j71b.dtb
+          for node in /dmic /microphones /soc/pdm@20a0b4000 /soc/aop@210800000/aop-audio; do
+            test "$(fdtget "$dtb" "$node" status)" = okay
+          done
+          test "$(fdtget "$dtb" /sound status)" = disabled
+          test "$(fdtget "$dtb" /soc/mca@20a0a8000 status)" = disabled
+          find out/components/kernel/lib/modules -name '*pdm*' -o -name '*aop*' -o -name '*dmic*' -o -name '*max98357*' > out/components/audio-module-files.txt
+          grep -q 't8010-pdm.ko' out/components/audio-module-files.txt
+          grep -q 'aop-audio.ko' out/components/audio-module-files.txt
+          grep -q 'dmic.ko' out/components/audio-module-files.txt
+          grep -q 'max98357a.ko' out/components/audio-module-files.txt
+          modules=$(find out/components/kernel/lib/modules -mindepth 1 -maxdepth 1 -type d)
+          test "$(printf '%s\n' "$modules" | wc -l)" -eq 1
+          test -s "$modules/modules.dep"
+          test -s "$modules/modules.alias"
+          grep -q 'j71b-pdm' "$modules/modules.alias"
+          grep -q 't8010-aop-audio' "$modules/modules.alias"
+          dpkg-query -W > out/components/kernel-toolchain-packages.lock
+      - name: Archive components and corresponding kernel source
+        run: |
+          tar -C out -czf "out/kernel-components-$PLATFORM.tar.gz" components
+          tar -C linux --exclude=.git -czf "out/kernel-source-$PLATFORM.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchard-kernel-${{ matrix.platform }}
+          path: |
+            out/kernel-components-${{ matrix.platform }}.tar.gz
+            out/kernel-source-${{ matrix.platform }}.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+  assets:
+    needs: [kernel]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: orchard-*
+          path: out/downloads
+          merge-multiple: true
+      - name: Reuse exact unchanged tools and Pongo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python ci/fetch-test-artifact.py --repo stuart902/orchard --run 41579299652 --commit 498d90a683750b0826fad69be3d36626c3a0eb34 --artifact 13205248045 --sha256 8311a66ac814843dc9af2df9b723bb6c474ed67b9bfc4fa909cedbdb33b4cfb8 --output out/downloads
+          python ci/fetch-test-artifact.py --repo stuart902/orchard --run 41579299652 --commit 498d90a683750b0826fad69be3d36626c3a0eb34 --artifact 13205093610 --sha256 0e098bcd257f92be88a4b8e93801f67016c6b8f963b0a670510111409ddd9120 --output out/downloads
+      - name: Reuse corresponding recovery-tool source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python ci/fetch-test-artifact.py --repo stuart902/orchard --run 41669566156 --commit 70af56d6962cfb800483dca566d89224a5f06384 --artifact 13248760109 --sha256 894aca22eeaee38bef59b896b0530d90e6fd741810c2a799e14014aa7663e2f2 --output out/source-input
+          cp out/source-input/recovery-tool-source.tar.gz out/downloads/
+          rm -rf out/source-input
+      - name: Assemble public component bundle without rebuilding
+        run: |
+          mkdir -p out/publication
+          tar -xzf out/downloads/tool-components.tar.gz -C out
+          tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
+          # One bundle per platform carries its kernel, modules and every DTB, and the
+          # shared tools and loaders; devices/<device>/device.toml names a device's DTB.
+          for platform in apple-16k; do
+            mkdir -p "out/platforms/$platform"
+            tar -xzf "out/downloads/kernel-components-$platform.tar.gz" -C "out/platforms/$platform"
+            cp -R out/components/boot out/components/quiet out/components/*.lock "out/platforms/$platform/components/"
+            python ci/package_components.py --platform "$platform" --directory "out/platforms/$platform/components" \
+              --output "out/publication/$platform-components.tar.gz"
+          done
+          tar -xzf out/downloads/kernel-components-apple-16k.tar.gz -C out
+          # Compatibility: the shared launcher still reads the J71b bundle layout.
+          bundle=out/bundles/j71b/components
+          mkdir -p "$bundle/kernel"
+          cp -R out/components/boot out/components/quiet out/components/*.lock "$bundle/"
+          cp -R out/components/kernel/Image.gz out/components/kernel/kernel.release \
+            out/components/kernel/lib "$bundle/kernel/"
+          read -r _ dtb < <(python kernel/series.py --resolve j71b)
+          cp "out/components/kernel/dtbs/$dtb.dtb" "$bundle/kernel/j71b.dtb"
+          python ci/package_components.py --device j71b --directory "$bundle" \
+            --output out/publication/j71b-components.tar.gz
+          cp out/downloads/*.tar.gz out/publication/
+          cp out/components/kernel.config out/publication/kernel-apple-16k.config
+          cp out/components/audio-module-files.txt out/publication/
+          printf '%s\n' '0bdf444d56aad6f99616dc739f0a18e8937694b5' > out/publication/audio-base-commit.txt
+          # orchard launch starts any device with only Pongo and the storage-capable
+          # m1n1 (orchard.hardware.loader); they are release assets of their own.
+          cp out/components/quiet/m1n1.bin out/components/quiet/pongo.bin out/publication/
+          # orchard update fetches the core with every device and both loaders.
+          python -m pip install -e .
+          python -m orchard.installer core out/publication/orchard-core.pyz \
+            --pongo out/components/quiet/pongo.bin --m1n1 out/components/quiet/m1n1.bin
+          # tool-components.tar.gz stays: a distribution build takes its tools from it.
+          rm out/publication/kernel-components-*.tar.gz out/publication/quiet-pongo.tar.gz
+          # This is a microphone-only test build, not a published release.
+          printf '%s\n' 'c410dc9c3f61fa12ca54c8fbf77f3e182e4e8d5f' > out/publication/test-kernel-commit.txt
+          git rev-parse HEAD > out/publication/test-orchard-commit.txt
+          printf '%s\n' '6b5fca68c56868651113ede0063a3061d0b22914' > out/publication/test-orchard-base.txt
+          git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
+          (cd out/publication && sha256sum ./*.tar.gz ./*.bin ./*.pyz ./test-kernel-commit.txt ./test-orchard-commit.txt ./test-orchard-base.txt ./kernel-apple-16k.config ./audio-module-files.txt ./audio-base-commit.txt > SHA256SUMS)
+      - name: Attest public build
+        if: toJSON(github.event.repository.private) == 'false'
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: out/publication/*
+      - name: Include public attestation bundle
+        if: toJSON(github.event.repository.private) == 'false'
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" "out/publication/orchard-build.sigstore.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchard-microphone-desktop-components
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
