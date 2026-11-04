@@ -1,12 +1,22 @@
 name: Build orchard - J71b export only
 on:
-  push:
-    branches: [test/j71b-export-refresh-20261104]
   workflow_dispatch:
+    inputs:
+      reuse_run_id:
+        description: Unused for this export-only check; leave empty
+        required: false
+      nightly:
+        description: Must remain false; this workflow never publishes
+        type: boolean
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: j71b-documented-export
+  cancel-in-progress: false
 jobs:
   export:
+    if: github.ref == 'refs/heads/test/j71b-export-refresh-20261104' && !inputs.nightly
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     env:
@@ -19,17 +29,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Validate script syntax
+        run: python -c 'import ast, pathlib; ast.parse(pathlib.Path("ci/j71b-refresh-export.py").read_text())'
       - name: Prepare documented export tools
         run: |
           df -h "$PWD"
           python -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
           sudo apt-get update
           sudo apt-get install -y podman gcc
-      - name: Regenerate, export and test the source
+      - name: Regenerate, export, round-trip and test the source
         run: python ci/j71b-refresh-export.py
       - uses: actions/upload-artifact@v4
         with:
           name: j71b-documented-export
           path: out/j71b-export
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90

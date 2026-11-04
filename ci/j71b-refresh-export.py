@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Run Orchard's documented export workflow for the J71b submission."""
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import textwrap
 
 SOURCE = "d3cf992b03c898f2ca46757046124e9cb84baac3"
 CANDIDATE = "9a70f8a7864d0a96ba907e4d1e5440fefb94bc5e"
@@ -32,6 +34,12 @@ run("git", "config", "--global", "user.name", "Stuart Fraser")
 run("git", "config", "--global", "user.email", "60394096+stuart902@users.noreply.github.com")
 run("git", "fetch", "--no-tags", "origin", SOURCE, CANDIDATE)
 run("git", "worktree", "add", "--detach", orchard, SOURCE)
+# Refuse to export onto a stale base; this job never updates main.
+remote_main = run("git", "ls-remote", "https://github.com/OrchardLinux/orchard.git",
+                  "refs/heads/main", capture=True).split()[0]
+assert remote_main == SOURCE, ("upstream advanced; refresh the source pin", remote_main)
+assert git(workspace, "rev-parse", "origin/main") == SOURCE
+run("git", "-C", orchard, "switch", "-c", "j71b-orchard-export-review")
 run("git", "clone", "--depth=1", "--no-checkout", "https://github.com/OrchardLinux/linux.git", linux)
 run("git", "clone", "--no-checkout", "https://github.com/OrchardLinux/m1n1.git", m1n1)
 # Keep regeneration away from a checked-out branch; these are disposable clones.
@@ -42,6 +50,11 @@ run("git", "-C", m1n1, "symbolic-ref", "HEAD", "refs/heads/export-workspace")
 run(sys.executable, orchard / "tools/kernel-tree/regenerate",
     "--linux", linux, "--m1n1", m1n1, SOURCE, cwd=orchard)
 base = git(linux, "rev-parse", "main")
+description = json.loads(run(sys.executable, orchard / "kernel/series.py",
+                             "--platform", "apple-16k", capture=True))
+upstream = dict(line.split("=", 1) for line in
+                (orchard / description["upstream"]).read_text().splitlines()
+                if "=" in line)
 run("git", "-C", linux, "switch", "-c", "j71b-power-export", base)
 
 patch_inputs = [
@@ -122,26 +135,125 @@ expected_paths = sorted(generated + list(base_configs) + test_paths + ["CHANGELO
 actual = sorted(set(git(orchard, "diff", "--name-only").splitlines()) |
                 set(git(orchard, "ls-files", "--others", "--exclude-standard").splitlines()))
 assert actual == expected_paths, (actual, expected_paths)
-run("git", "-C", orchard, "add", "--", *expected_paths)
-tree = git(orchard, "write-tree")
+# Validation history follows the same logical split as the submission.
+# These local commits are retained in the bundle, not pushed by this job.
+logical_groups = [
+    ("power: add J71b shutdown and restart preparation",
+     "Add the D2365 sys-off preparation driver, same-PMIC GPIO event quiescing, "
+     "bindings and the J71b device node. Enable CONFIG_POWER_RESET_APPLE_D2365=y "
+     "in both apple-4k and apple-16k so the built-in handler is available at "
+     "shutdown; only J71b instantiates it.",
+     generated + list(base_configs)),
+    ("tests: cover D2365 shutdown and provider lifetime",
+     "Exercise the exported driver and GPIO helper with an in-memory bus and "
+     "provider fixtures. Cover transaction failure, handler ordering and "
+     "reference cleanup without device access.",
+     test_paths),
+    ("docs: note experimental J71b PMIC power-off support",
+     "Record the experimental J71b power-off behavior under Unreleased.",
+     ["CHANGELOG.md"]),
+]
+validation_commits = []
+for subject, body, paths in logical_groups:
+    run("git", "-C", orchard, "add", "--", *paths)
+    run("git", "-C", orchard, "commit", "-m", subject, "-m",
+        textwrap.fill(body, width=72) + "\n\nAssisted-by: LLM")
+    validation_commits.append(git(orchard, "rev-parse", "HEAD"))
+candidate = git(orchard, "rev-parse", "HEAD")
+tree = git(orchard, "rev-parse", candidate + "^{tree}")
+assert git(orchard, "status", "--porcelain") == ""
+assert git(orchard, "rev-list", "--count", SOURCE + ".." + candidate) == "3"
+
+# The exporter requires a second regeneration after committing, to verify
+# the real repository series order rather than just export order.
+run(sys.executable, orchard / "tools/kernel-tree/regenerate",
+    "--linux", linux, "--m1n1", m1n1, candidate, cwd=orchard)
+roundtrip = git(linux, "rev-parse", "main")
+run("git", "-C", linux, "diff", "--exit-code", source_tip, roundtrip, "--", ".",
+    ":(exclude,glob)arch/*/configs/orchard_*_defconfig")
+# regenerate also checks each expanded defconfig against Orchard byte-for-byte.
+assert git(orchard, "rev-parse", "HEAD^{tree}") == tree
+assert git(orchard, "status", "--porcelain") == ""
+
+# Retain replayable Git history with explicit, public prerequisites. Bundling
+# only descendants avoids duplicating the upstream kernel's full history.
+kernel_bundle = out / "kernel-source.bundle"
+run("git", "-C", linux, "bundle", "create", kernel_bundle,
+    "^" + upstream["commit"], "refs/heads/j71b-power-export", "refs/heads/main")
+# Prove the bundle can restore the exact source and round-trip commits in a
+# fresh repository seeded only with the declared public upstream prerequisite.
+restored = scratch / "restored-kernel"
+run("git", "init", "--bare", restored)
+run("git", "-C", restored, "fetch", "--no-tags", "--depth=1",
+    upstream["url"], upstream["commit"])
+run("git", "-C", restored, "bundle", "verify", kernel_bundle)
+run("git", "-C", restored, "fetch", kernel_bundle,
+    "refs/heads/j71b-power-export:refs/heads/j71b-power-export",
+    "refs/heads/main:refs/heads/main")
+assert git(restored, "rev-parse", "j71b-power-export") == source_tip
+assert git(restored, "rev-parse", "main") == roundtrip
+assert git(restored, "rev-parse", source_tip + "^{tree}") == git(linux, "rev-parse", source_tip + "^{tree}")
+shutil.rmtree(restored)
+orchard_bundle = out / "orchard-export-review.bundle"
+run("git", "-C", orchard, "bundle", "create", orchard_bundle,
+    SOURCE + "..refs/heads/j71b-orchard-export-review")
+run("git", "-C", orchard, "bundle", "verify", orchard_bundle)
+
+# Preserve the complete export, not just the four patches.
+files = []
+for path in expected_paths:
+    target = out / "files" / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(orchard / path, target)
+    files.append({"path": path, "blob": git(orchard, "rev-parse", candidate + ":" + path),
+                  "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+source_history = []
+for sha in [base] + source_commits + [source_tip, roundtrip]:
+    source_history.append({"sha": sha, "commit": git(linux, "cat-file", "commit", sha)})
+(out / "kernel-commit-lineage.json").write_text(json.dumps(source_history, indent=2) + "\n")
 receipt = {"orchard_base": SOURCE, "input_candidate": CANDIDATE,
            "kernel_base": base, "kernel_candidate": source_tip,
            "kernel_tree": git(linux, "rev-parse", source_tip + "^{tree}"),
-           "orchard_tree": tree, "generated_patches": generated,
+           "kernel_roundtrip": roundtrip,
+           "kernel_roundtrip_tree": git(linux, "rev-parse", roundtrip + "^{tree}"),
+           "kernel_bundle_prerequisite": upstream,
+           "kernel_bundle_restoration_verified": True,
+           "orchard_validation_commits": validation_commits,
+           "orchard_validation_tip": candidate, "orchard_tree": tree,
+           "files": files, "generated_patches": generated,
            "production_equal_linux": LINUX_SOURCE,
            "upstream_patches_unchanged": True, "configs_exact_delta": True,
-           "host_tests_passed": True, "device_tested": False,
+           "host_tests_passed": True, "series_roundtrip_passed": True,
+           "image_built": False, "device_tested": False,
            "export_command": [str(x) for x in export_command]}
 (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+(out / "README.txt").write_text(
+    "J71b documented export for Orchard review\n\n"
+    "This artifact contains all 11 candidate files under files/, the exact "
+    "export receipt, kernel commit metadata, and two Git bundles. No ref was "
+    "pushed, no PR was created, and no image/device test was performed.\n\n"
+    "Kernel bundle prerequisite: fetch " + upstream["commit"] + " from "
+    + upstream["url"] + ". Then git bundle verify kernel-source.bundle and "
+    "git fetch kernel-source.bundle refs/heads/j71b-power-export:refs/heads/j71b-power-export. "
+    "The bundle also retains the regenerated final main for round-trip inspection.\n\n"
+    "Orchard bundle prerequisite: fetch " + SOURCE + " from "
+    "https://github.com/OrchardLinux/orchard.git. Then git bundle verify "
+    "orchard-export-review.bundle and git fetch orchard-export-review.bundle "
+    "refs/heads/j71b-orchard-export-review:refs/heads/j71b-orchard-export-review.\n\n"
+    "The three Orchard commits here are validation history only. Any final "
+    "submission history must use exactly the recorded blobs/tree, preserve the "
+    "logical split, and disclose its own SHA. Exact-revision image and device "
+    "testing remain outstanding.\n")
+manifest = []
+for path in sorted(out.rglob("*")):
+    if path.is_file():
+        manifest.append(hashlib.sha256(path.read_bytes()).hexdigest()
+                        + "  " + str(path.relative_to(out)))
+(out / "SHA256SUMS").write_text("\n".join(manifest) + "\n")
 print("EXPORT_RECEIPT " + json.dumps(receipt), flush=True)
-for path in generated:
-    data = {"path": path, "blob": git(orchard, "hash-object", orchard / path),
-            "content": (orchard / path).read_text()}
-    print("EXPORT_FILE " + json.dumps(data), flush=True)
-    target = out / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(orchard / path, target)
-for path in list(base_configs) + test_paths + ["CHANGELOG.md"]:
-    print("EXPORT_BLOB " + json.dumps({"path": path, "blob": git(orchard, "hash-object", orchard / path)}), flush=True)
-run("git", "-C", orchard, "diff", "--cached", "--stat", SOURCE)
-print("Documented export and host tests passed. No kernel/image build or device access was performed.", flush=True)
+for item in files:
+    print("EXPORT_FILE " + json.dumps({**item,
+        "content": (orchard / item["path"]).read_text()}), flush=True)
+run("git", "-C", orchard, "diff", "--stat", SOURCE, candidate)
+print("Documented export, series round trip, bundle restoration and host tests passed. "
+      "No kernel/image build or device access was performed.", flush=True)
