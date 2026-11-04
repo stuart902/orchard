@@ -1,0 +1,129 @@
+name: J71b combined power and microphone components (no release)
+on:
+  push:
+    branches: [test/j71b-power-microphone-nov4]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: j71b-power-microphone-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e '.[validate]' && python -m pip check
+      - run: python -m unittest discover -s tests -v
+  kernel:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+      ORCHARD_PUBLISHED: 'off'
+      ORCHARD_KERNEL: local
+      LINUX_TREE: ${{ github.workspace }}/linux
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv curl gcc device-tree-compiler kmod
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 38939748c8eba9c3331bfc6b5ac22c72e217499a
+          path: linux
+          persist-credentials: false
+      - name: Verify exact source, tested source bytes and complete production base
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD"
+          git config --global --add safe.directory "$PWD/linux"
+          df -h "$PWD"
+          python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
+          echo "ORCHARD_CACHE_DIR=$PWD/out/cache" >> "$GITHUB_ENV"
+          python3 ci/audit-power-microphone.py linux
+          python3 linux/tools/testing/selftests/d2365/test_poweroff.py
+          python3 ci/test-mca-xrun.py
+      - name: Install native toolchain and checkout launcher
+        run: |
+          bash kernel/install-toolchain
+          python3 -m venv /tmp/orchard-ci
+          /tmp/orchard-ci/bin/pip install uv
+          echo /tmp/orchard-ci/bin >> "$GITHUB_PATH"
+      - name: Reuse exact final-power components and corresponding recovery source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 ci/fetch-test-artifact.py --repo stuart902/orchard --run 41734585711 \
+            --commit 81b364712f9bbc9ea44aeac6825f0be1e63b071b --artifact 13278797723 \
+            --sha256 dd7b4e46910d9876eae7e1eed6886e93f54d7eef8a68ab9d5dbe2eab8b77377f --output out/reused
+          (cd out/reused && sha256sum --check --strict SHA256SUMS)
+          tar -xzf out/reused/apple-16k-components.tar.gz -C out/reused
+          python3 ci/stage-power-microphone.py reuse
+          python3 ci/fetch-test-artifact.py --repo stuart902/orchard --run 41669566156 \
+            --commit 70af56d6962cfb800483dca566d89224a5f06384 --artifact 13248760109 \
+            --sha256 894aca22eeaee38bef59b896b0530d90e6fd741810c2a799e14014aa7663e2f2 --output out/tool-source
+      - name: Build full native 16K kernel, all modules and DTBs once
+        run: |
+          "$PWD/bin/orchard" build "$PWD/examples/hardware-check" --platform apple-16k \
+            --kernel-tree "$PWD/linux" --loader "$PWD/out/components/quiet/m1n1.bin" \
+            --pongo "$PWD/out/components/quiet/pongo.bin" --busybox "$PWD/out/components/boot/busybox"
+      - name: Audit and package coherent components and corresponding sources
+        run: |
+          set -euo pipefail
+          "$PWD/bin/orchard" python ci/stage-power-microphone.py stage
+          dpkg-query -W > out/components/kernel-toolchain-packages.lock
+          mkdir -p out/publication
+          "$PWD/bin/orchard" python ci/package_components.py --platform apple-16k \
+            --directory out/components --output out/publication/apple-16k-components.tar.gz
+          git -C linux archive --format=tar.gz -o "$PWD/out/publication/kernel-source-apple-16k.tar.gz" HEAD
+          git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
+          cp out/reused/orchard-source.tar.gz out/publication/reused-orchard-source.tar.gz
+          cp out/reused/pongo-source.tar.gz out/publication/
+          cp out/tool-source/recovery-tool-source.tar.gz out/publication/
+          cp out/components/integration-receipt.json out/components/reuse-receipt.json out/components/resolved.config out/publication/
+          cp examples/hardware-check/out/apple-16k/build.json out/publication/ram-build.json
+          cp examples/hardware-check/out/apple-16k/commands.sh out/publication/
+          cp docs/j71b-power-microphone.md out/publication/VALIDATION.md
+          git -C linux rev-parse HEAD > out/publication/test-kernel-commit.txt
+          git rev-parse HEAD > out/publication/test-orchard-commit.txt
+          cp out/components/kernel/kernel.release out/publication/
+          (cd out/publication && sha256sum * > SHA256SUMS)
+          git -C linux diff --exit-code HEAD
+          git diff --exit-code HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchard-power-microphone-apple-16k
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchard-power-microphone-failure
+          path: |
+            linux/.orchard-out/apple-16k/output/.config
+            out/components/*receipt.json
+            examples/hardware-check/out/apple-16k/build.json
+          if-no-files-found: ignore
+          retention-days: 7
