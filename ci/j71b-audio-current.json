@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "orchard_commit": "79df400f60c76154a47fdb4dc1eff06dbb1aa8a2",
+  "orchard_tree": "273bffd7cb3abf307f0ee8fdb4e7c16ccc4a54f9",
+  "linux_upstream": "cee9395acd8043be0644b25c34bfa86623f2b935",
+  "production_kernel_tree": "9d3d54b2b1d952f0a31ca222d7e34c10ba229505",
+  "microphone_source": "b1694a574a8f12b4004f269ae4cc83e6f4b8a30b",
+  "mca_xrun_source": "0bdf444d56aad6f99616dc739f0a18e8937694b5",
+  "microphone_files": {
+    "Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml": "6486119e0733916e03cbe9a9e496b6a4795a51212e915ca63749f49722caab0a",
+    "Documentation/devicetree/bindings/sound/apple,t8010-pdm.yaml": "51d30d50f1ffe179689aed9e699406e869887673deef81a8e59b0f8881388d8e",
+    "drivers/dma/apple-sio-dma.c": "dd70fbad400accf5470b2e29e47d2ea6d90121312aeb9d6b7b763d07aa311829",
+    "drivers/soc/apple/Kconfig": "946656f9901d64e7cf024c8b159dd03878d4cce9c8edc8b13624e112e97dc203",
+    "drivers/soc/apple/Makefile": "af85be5a1b721af46cd3510ccfc4a203629f515586c4b1b89ac8202cfd3373c8",
+    "drivers/soc/apple/aop-audio-clock.h": "c41141590c29a7e55762deb9b71244ed8a24e980a725cb4e0306899a9b3ce97a",
+    "drivers/soc/apple/aop-audio-protocol.h": "94523684049d578f2a1c6569a98c1727f17fb742ad33d76cb66588c0eece3487",
+    "drivers/soc/apple/aop-audio-test.c": "3e087fbfac1a6aea15d7d35a4370ecdd0afb4a280ed3a87139580fe8a2abbbed",
+    "drivers/soc/apple/aop-audio.c": "425c06a203259c1065cee5d381fb3df7a6579222d6de2a96d9f68ae6cc670811",
+    "drivers/soc/apple/aop.c": "abf10cc20c3bbb17ce60473a92c6c1ece1f3d028655c742396ab730becafd738",
+    "drivers/soc/apple/apple-sio-core.c": "fe4cdeb1affcf25f316af16ea8414cefdb133bbbbcc56af5b1c8b91439342adf",
+    "include/linux/soc/apple/aop-audio.h": "288fa05cd85b89d1168305d1ef06af8f04bb27d60834e407e3d3a00212a7cf92",
+    "include/linux/soc/apple/aop.h": "e07ccc6faacc98b4ac9a03dd111046f6cc14be63671b949bda0e5a38f6fa49b4",
+    "include/linux/soc/apple/sio.h": "2ae1700f72b2212f07a8684a2d38bdb820b46c583d9f33901d95b16a62a7562f",
+    "sound/soc/apple/Kconfig": "8d4d1a5d2658f53c8ea57846b219f204cad5ed601bde5139e82f181ef4915563",
+    "sound/soc/apple/Makefile": "9843cd86aeac14fb5881f31dac022b3f45c6f0cd496bda929894bb4bd03da86e",
+    "sound/soc/apple/t8010-pdm-adt.h": "3ccea501ef3ffe8ee0bee2b5d093d3d3cff5ce50c89a10a972b0fa38536fdf18",
+    "sound/soc/apple/t8010-pdm-test.c": "42b56bea4ef53d592d421d19b82847c49536bde31207f9432e2e4a0c852cd8cc",
+    "sound/soc/apple/t8010-pdm.c": "1a747020770d844a0b16adbc7a4f26becc3f1f8df641268925d87fda47aa9c2f",
+    "sound/soc/apple/t8010-pdm.h": "ac78657f65f140449153b8aff3f78397f3a292c2b299819b880c3c542fa7204b"
+  },
+  "production_restore": [
+    {
+      "path": "Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml",
+      "production_blob": "14726afa020823a2edeae60dff8d757f1e223506",
+      "production_mode": "100644"
+    },
+    {
+      "path": "Documentation/devicetree/bindings/sound/apple,t8010-pdm.yaml",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "arch/arm64/boot/dts/apple/t8010-j71b.dts",
+      "production_blob": "9b87b385b268b06bfa21581857e70f955de6f0e3",
+      "production_mode": "100644"
+    },
+    {
+      "path": "arch/arm64/configs/orchard_apple16k_defconfig",
+      "production_blob": "f1054791480966df72181083518db41b7883b590",
+      "production_mode": "100644"
+    },
+    {
+      "path": "arch/arm64/configs/orchard_apple4k_defconfig",
+      "production_blob": "c1eabb4729ee61b80459c2601846b216ec8a0763",
+      "production_mode": "100644"
+    },
+    {
+      "path": "drivers/dma/apple-sio-dma.c",
+      "production_blob": "aa304dc66832530ba5a21f3ab9660f8c7443faee",
+      "production_mode": "100644"
+    },
+    {
+      "path": "drivers/soc/apple/Kconfig",
+      "production_blob": "e68a49f1b4d40e259ce5394ea19efc0c52f58902",
+      "production_mode": "100644"
+    },
+    {
+      "path": "drivers/soc/apple/Makefile",
+      "production_blob": "f99975cc639f7112a3641f4740a700f632db0df0",
+      "production_mode": "100644"
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio-clock.h",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio-protocol.h",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio-test.c",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "drivers/soc/apple/aop-audio.c",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "drivers/soc/apple/aop.c",
+      "production_blob": "e8ae90098573d91fca50b54c4125f40fee3c15f0",
+      "production_mode": "100644"
+    },
+    {
+      "path": "drivers/soc/apple/apple-sio-core.c",
+      "production_blob": "20d135e6a73495a714f6faa4dcd6267502a7c456",
+      "production_mode": "100644"
+    },
+    {
+      "path": "include/linux/soc/apple/aop-audio.h",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "include/linux/soc/apple/aop.h",
+      "production_blob": "8c8bc71b66a091735d96b29a8275bb7d06440f13",
+      "production_mode": "100644"
+    },
+    {
+      "path": "include/linux/soc/apple/sio.h",
+      "production_blob": "c9e0a29b1f23584a9b5dedeb0bd90abd2b78a755",
+      "production_mode": "100644"
+    },
+    {
+      "path": "sound/soc/apple/Kconfig",
+      "production_blob": "0e9d36cf9607083da8591b58064fa171d9957b41",
+      "production_mode": "100644"
+    },
+    {
+      "path": "sound/soc/apple/Makefile",
+      "production_blob": "0058680040a380b4011c3a96ca9fcaeb636ab385",
+      "production_mode": "100644"
+    },
+    {
+      "path": "sound/soc/apple/s8000-mca.c",
+      "production_blob": "588ca37fa52579343cf64848a21af4cfa492ab97",
+      "production_mode": "100644"
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm-adt.h",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm-test.c",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm.c",
+      "production_blob": null,
+      "production_mode": null
+    },
+    {
+      "path": "sound/soc/apple/t8010-pdm.h",
+      "production_blob": null,
+      "production_mode": null
+    }
+  ],
+  "baseline_configs": {
+    "4k": "ad3bb0b6d3de0c079de39a9bf0291aeb1c0152b39b2da2d7318aaa857262365e",
+    "16k": "1fa591f40b73776d978c1207eebcc358408ac1f733a1f25e8188bb393f1b7bf2"
+  },
+  "variants": {
+    "audio": {
+      "kernel_tree": "bf03f2961ab165430d3a9174b9095398785dc8cd",
+      "localversion": "",
+      "mca_sha256": "13374c9e7b135bed7343891fe8537480dca340a56237ac554568ff8200e0a23a",
+      "dts_sha256": "341c73083afaa4dcc8fd217ca3fbb00e12a1680b918fe024fc6f42601785aa71"
+    },
+    "microphone": {
+      "kernel_tree": "e30fc58f7ba16206b7c50338f76015e72d2236d1",
+      "localversion": "-j71b-audio-nov4-r1",
+      "mca_sha256": "13374c9e7b135bed7343891fe8537480dca340a56237ac554568ff8200e0a23a",
+      "dts_sha256": "cfbb9aff8cc265b3f83808ffd0888058395a72c01c073257d1f2d11ea45908d9"
+    }
+  }
+}
