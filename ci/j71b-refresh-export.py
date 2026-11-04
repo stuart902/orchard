@@ -123,10 +123,17 @@ for path in test_paths:
     target.write_bytes(subprocess.check_output(["git", "-C", str(orchard), "show", CANDIDATE + ":" + path]))
 changelog = orchard / "CHANGELOG.md"
 content = changelog.read_text()
+heading = "## [Unreleased]\n"
+assert content.count(heading) == 1
+before, unreleased_and_later = content.split(heading, 1)
+unreleased, separator, later = unreleased_and_later.partition("\n## ")
 anchor = "### Hardware\n\n"
-assert content.count(anchor) == 1
+assert unreleased.count(anchor) == 1
 entry = "- Add experimental PMIC power-off handling for iPad (6th generation, Wi-Fi;\n  iPad7,5 / J71b).\n"
-changelog.write_text(content.replace(anchor, anchor + entry))
+assert entry not in content
+updated = before + heading + unreleased.replace(anchor, anchor + entry, 1) + separator + later
+assert updated.replace(entry, "", 1) == content
+changelog.write_text(updated)
 run(sys.executable, "-m", "pip", "install", "-e", ".[validate]", cwd=orchard)
 run(sys.executable, "-m", "pip", "check", cwd=orchard)
 run(sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v", cwd=orchard)
