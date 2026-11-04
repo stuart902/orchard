@@ -1,0 +1,82 @@
+name: Upstream MCA FIFO XRUN compile and callback tests
+on:
+  push:
+    branches: [ci/j71b-upstream-audio-nov3]
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        pages: [4k, 16k]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 0bdf444d56aad6f99616dc739f0a18e8937694b5
+          path: linux-draft
+          persist-credentials: false
+      - name: Verify exact source
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = 0bdf444d56aad6f99616dc739f0a18e8937694b5
+          test -z "$(git -C linux-draft status --porcelain)"
+          mkdir -p out
+          git -C linux-draft rev-parse HEAD > out/linux-source-commit.txt
+      - name: Install Orchard kernel toolchain
+        run: bash kernel/install-toolchain
+      - name: Compile only experimental objects using Orchard defconfig
+        run: |
+          build="$PWD/out/build"
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 orchard_apple${{ matrix.pages }}_defconfig
+          linux-draft/scripts/config --file "$build/.config" --module SND_SOC_APPLE_S8000_MCA
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 olddefconfig
+          grep -qx 'CONFIG_SND_SOC_APPLE_S8000_MCA=m' "$build/.config"
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" prepare modules_prepare
+          make -C linux-draft O="$build" LLVM=-19 ARCH=arm64 -j"$(nproc)" sound/soc/apple/s8000-mca.o
+          cp "$build/.config" out/kernel.config
+          cp "$build/sound/soc/apple/s8000-mca.o" out/
+          dpkg-query -W > out/toolchain-packages.lock
+          test -z "$(git -C linux-draft status --porcelain)"
+          (cd out && sha256sum *.o kernel.config linux-source-commit.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-mca-xrun-compile-${{ matrix.pages }}
+          path: |
+            out/*.o
+            out/kernel.config
+            out/linux-source-commit.txt
+            out/toolchain-packages.lock
+            out/SHA256SUMS
+          retention-days: 7
+          if-no-files-found: error
+  callbacks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: 0bdf444d56aad6f99616dc739f0a18e8937694b5
+          path: linux-draft
+          persist-credentials: false
+      - name: Test actual IRQ and lifecycle callbacks with synthetic state
+        shell: bash
+        run: |
+          test "$(git -C linux-draft rev-parse HEAD)" = 0bdf444d56aad6f99616dc739f0a18e8937694b5
+          export LINUX_TREE="$PWD/linux-draft"
+          python3 ci/j71b-upstream-audio/test_xrun.py
+          test -z "$(git -C linux-draft status --porcelain)"
