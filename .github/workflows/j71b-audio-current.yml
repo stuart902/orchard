@@ -112,16 +112,23 @@ jobs:
           python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
           echo "ORCHARD_CACHE_DIR=$PWD/out/cache" >> "$GITHUB_ENV"
           python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
       - name: Install native kernel toolchain and checkout launcher
         run: |
           bash kernel/install-toolchain
-          python3 -c 'import inspect, tarfile; assert "filter" in inspect.signature(tarfile.TarFile.extractall).parameters'
-          python3 -m venv /tmp/orchard-ci
-          /tmp/orchard-ci/bin/pip install uv
+          # The host setup-python binary targets Ubuntu glibc; use a portable
+          # managed Python inside bookworm without changing the kernel toolchain.
+          /usr/bin/python3 -m venv /tmp/orchard-bootstrap
+          /tmp/orchard-bootstrap/bin/pip install uv==0.13.7
+          /tmp/orchard-bootstrap/bin/uv python install 3.14
+          /tmp/orchard-bootstrap/bin/uv venv --python 3.14 /tmp/orchard-ci
+          /tmp/orchard-ci/bin/python -c 'import inspect, tarfile; assert "filter" in inspect.signature(tarfile.TarFile.extractall).parameters'
+          echo /tmp/orchard-bootstrap/bin >> "$GITHUB_PATH"
           echo /tmp/orchard-ci/bin >> "$GITHUB_PATH"
+          echo "UV_PYTHON=/tmp/orchard-ci/bin/python" >> "$GITHUB_ENV"
+          mkdir -p out
+          /tmp/orchard-ci/bin/python -VV > out/python-runtime.txt
+          /tmp/orchard-bootstrap/bin/uv --version >> out/python-runtime.txt
+          /tmp/orchard-bootstrap/bin/uv python list --only-installed >> out/python-runtime.txt
       - name: Reuse exact published boot tools and corresponding sources
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,6 +157,7 @@ jobs:
           cp examples/hardware-check/out/apple-16k/commands.sh out/publication/build-commands.sh
           python3 ci/export-audio-loader-source.py
           cp ci/AUDIO-TEST-README.txt out/publication/README.txt
+          cp out/python-runtime.txt out/publication/
           (cd out/publication && sha256sum * > SHA256SUMS)
       - name: Attest public test components
         if: toJSON(github.event.repository.private) == 'false'
