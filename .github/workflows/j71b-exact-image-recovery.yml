@@ -109,7 +109,6 @@ jobs:
     env:
       ORCHARD_BUILD_NATIVE: '1'
       ORCHARD_BUILD_ENV_ID: archlinuxarm-1db43d1-desktop-and-system
-      ORCHARD_CHECKOUT: ${{ github.workspace }}/.orchard
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,11 +138,12 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install -e './.orchard[validate]'
           .venv/bin/python -m pip check
-          test "$(git rev-parse HEAD)" = "$OMARCHY_SHA"
-          test "$(git -C .orchard rev-parse HEAD)" = "$ORCHARD_SHA"
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          test "$(git -c safe.directory="$PWD" rev-parse HEAD)" = "$OMARCHY_SHA"
+          test "$(git -c safe.directory="$PWD/.orchard" -C .orchard rev-parse HEAD)" = "$ORCHARD_SHA"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "ORCHARD_CHECKOUT=$PWD/.orchard" >> "$GITHUB_ENV"
           useradd --create-home --uid 2000 builder
-          chown -R builder:builder "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$PWD"
       - name: Check build disk space
         run: |
           df -h .
@@ -151,16 +151,16 @@ jobs:
       - name: Build source components as an unprivileged user
         run: |
           runuser -u builder -- env PATH="$PATH" ORCHARD_BUILD_NATIVE=1 ORCHARD_BUILD_ENV_ID="$ORCHARD_BUILD_ENV_ID" \
-            ORCHARD_CHECKOUT="$GITHUB_WORKSPACE/.orchard" \
+            ORCHARD_CHECKOUT="$PWD/.orchard" \
             python desktop/build --output out/desktop
           runuser -u builder -- env PATH="$PATH" ORCHARD_BUILD_NATIVE=1 ORCHARD_BUILD_ENV_ID="$ORCHARD_BUILD_ENV_ID" \
-            ORCHARD_CHECKOUT="$GITHUB_WORKSPACE/.orchard" \
+            ORCHARD_CHECKOUT="$PWD/.orchard" \
             python desktop/build-cursor-helper --output out/cursor
           runuser -u builder -- env PATH="$PATH" ORCHARD_BUILD_NATIVE=1 ORCHARD_BUILD_ENV_ID="$ORCHARD_BUILD_ENV_ID" \
-            ORCHARD_CHECKOUT="$GITHUB_WORKSPACE/.orchard" \
+            ORCHARD_CHECKOUT="$PWD/.orchard" \
             python desktop/build-bluetooth-tools --output out/bluetooth
           runuser -u builder -- env PATH="$PATH" ORCHARD_BUILD_NATIVE=1 ORCHARD_BUILD_ENV_ID="$ORCHARD_BUILD_ENV_ID" \
-            ORCHARD_CHECKOUT="$GITHUB_WORKSPACE/.orchard" \
+            ORCHARD_CHECKOUT="$PWD/.orchard" \
             python desktop/build-labwc --output out/labwc
       - name: Build the signed Arch root filesystem
         env:
