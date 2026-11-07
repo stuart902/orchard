@@ -23,11 +23,13 @@ def config_values(text):
     return values
 
 
-def check_config(resolved, baseline, localversion, pages):
+def check_config(resolved, baseline, localversion, pages, diagnostic=False):
     expected = config_values(baseline)
     expected.update(CONFIG_APPLE_AOP_T8010='m', CONFIG_APPLE_AOP_AUDIO='m',
                     CONFIG_SND_SOC_APPLE_T8010_PDM='m', CONFIG_SND_SOC_DMIC='m',
                     CONFIG_LOCALVERSION=json.dumps(localversion))
+    if diagnostic:
+        expected["CONFIG_SND_SOC_MAX98357A_J71B_TEST"] = "y"
     actual = config_values(resolved)
     # Kconfig omits symbols whose dependencies are disabled. Omitted and n
     # are equivalent; no new enabled option or changed baseline choice is.
@@ -59,6 +61,7 @@ def check_source(kernel, record, variant, expected_commit):
     if git('ls-files', '--others', '--exclude-standard'):
         raise ValueError('Untracked kernel source files are not permitted')
     files = dict(record['microphone_files'])
+    files.update(current.get('diagnostic_files', {}))
     files['sound/soc/apple/s8000-mca.c'] = current['mca_sha256']
     files['arch/arm64/boot/dts/apple/t8010-j71b.dts'] = current['dts_sha256']
     for name, expected in files.items():
@@ -68,6 +71,15 @@ def check_source(kernel, record, variant, expected_commit):
     with tempfile.TemporaryDirectory() as temporary:
         env = {**os.environ, 'GIT_INDEX_FILE': str(Path(temporary) / 'index')}
         git('read-tree', 'HEAD', env=env)
+        if current.get('diagnostic'):
+            for row in current['diagnostic_restore']:
+                if row['base_blob'] is None:
+                    git('update-index', '--force-remove', row['path'], env=env)
+                else:
+                    git('update-index', '--add', '--cacheinfo', row['base_mode'],
+                        row['base_blob'], row['path'], env=env)
+            if git('write-tree', '--missing-ok', env=env).decode() != current['base_kernel_tree']:
+                raise ValueError('Unexpected change outside the declared diagnostic paths')
         for row in record['production_restore']:
             if row['production_blob'] is None:
                 git('update-index', '--force-remove', row['path'], env=env)
@@ -86,7 +98,7 @@ def main():
     parser.add_argument('kernel', type=Path)
     parser.add_argument('--record', type=Path,
                         default=Path(__file__).with_name('j71b-audio-current.json'))
-    parser.add_argument('--variant', choices=('audio', 'microphone'), required=True)
+    parser.add_argument('--variant', choices=('audio', 'microphone', 'speaker'), required=True)
     parser.add_argument('--expected-commit', required=True)
     parser.add_argument('--config', type=Path)
     parser.add_argument('--baseline-config', type=Path)
@@ -105,7 +117,7 @@ def main():
         baseline = args.baseline_config.read_bytes()
         if hashlib.sha256(baseline).hexdigest() != record['baseline_configs'][args.pages]:
             raise ValueError('Baseline configuration is not the pinned current Orchard config')
-        check_config(args.config.read_text(), baseline.decode(), current['localversion'], args.pages)
+        check_config(args.config.read_text(), baseline.decode(), current['localversion'], args.pages, current.get('diagnostic', False))
         result.update(pages=args.pages, config_verified=True,
                       resolved_config_sha256=hashlib.sha256(args.config.read_bytes()).hexdigest())
     if args.output:

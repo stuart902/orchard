@@ -161,5 +161,61 @@ class SourceTests(unittest.TestCase):
             self.check(record, self.git('rev-parse', 'HEAD'))
 
 
+class DiagnosticConfigTests(ConfigTests):
+    def check(self, value):
+        audit.check_config(value, self.baseline, '-test', '16k', diagnostic=True)
+
+    def setUp(self):
+        super().setUp()
+        self.config += 'CONFIG_SND_SOC_MAX98357A_J71B_TEST=y\n'
+
+    def test_diagnostic_option_cannot_disappear(self):
+        with self.assertRaises(ValueError):
+            self.check(self.config.replace('CONFIG_SND_SOC_MAX98357A_J71B_TEST=y\n', ''))
+
+    def test_diagnostic_option_cannot_be_module(self):
+        with self.assertRaises(ValueError):
+            self.check(self.config.replace('CONFIG_SND_SOC_MAX98357A_J71B_TEST=y',
+                                           'CONFIG_SND_SOC_MAX98357A_J71B_TEST=m'))
+
+    def test_four_k_provider_is_explicitly_enabled(self):
+        baseline = self.baseline.replace('16K', '4K').replace('CONFIG_APPLE_AOP_T8010=m', '# CONFIG_APPLE_AOP_T8010 is not set')
+        audit.check_config(self.config.replace('16K', '4K'), baseline, '-test', '4k', diagnostic=True)
+
+
+class DiagnosticSourceTests(SourceTests):
+    def setUp(self):
+        super().setUp()
+        variant = self.record['variants']['microphone']
+        variant.update(diagnostic=True, base_kernel_tree=variant['kernel_tree'])
+        path = self.paths[0]
+        original = self.git('rev-parse', 'HEAD:' + path)
+        (self.root / path).write_text('diagnostic\n')
+        (self.root / 'diagnostic-test.py').write_text('test\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'diagnostic')
+        self.commit = self.git('rev-parse', 'HEAD')
+        variant.update(kernel_tree=self.git('rev-parse', 'HEAD^{tree}'),
+                       mca_sha256=hashlib.sha256(b'diagnostic\n').hexdigest(),
+                       diagnostic_files={'diagnostic-test.py': hashlib.sha256(b'test\n').hexdigest()},
+                       diagnostic_restore=[{'path': path, 'base_blob': original, 'base_mode': '100644'},
+                                           {'path': 'diagnostic-test.py', 'base_blob': None, 'base_mode': None}])
+
+    def test_wrong_audio_base_fails(self):
+        record = copy.deepcopy(self.record)
+        record['variants']['microphone']['base_kernel_tree'] = '0' * 40
+        with self.assertRaises(ValueError): self.check(record)
+
+    def test_missing_diagnostic_restore_fails(self):
+        record = copy.deepcopy(self.record)
+        record['variants']['microphone']['diagnostic_restore'].pop()
+        with self.assertRaises(ValueError): self.check(record)
+
+    def test_diagnostic_source_digest_mismatch_fails(self):
+        record = copy.deepcopy(self.record)
+        record['variants']['microphone']['diagnostic_files']['diagnostic-test.py'] = '0' * 64
+        with self.assertRaises(ValueError): self.check(record)
+
+
 if __name__ == '__main__':
     unittest.main()

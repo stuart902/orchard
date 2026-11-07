@@ -166,6 +166,61 @@
       "localversion": "-j71b-audio-nov4-r1",
       "mca_sha256": "13374c9e7b135bed7343891fe8537480dca340a56237ac554568ff8200e0a23a",
       "dts_sha256": "cfbb9aff8cc265b3f83808ffd0888058395a72c01c073257d1f2d11ea45908d9"
+    },
+    "speaker": {
+      "kernel_tree": "9282aa778c0b72f7edf4f5cc474802ae14b29b98",
+      "localversion": "-j71b-speaker-window-nov7-r1",
+      "mca_sha256": "13374c9e7b135bed7343891fe8537480dca340a56237ac554568ff8200e0a23a",
+      "dts_sha256": "341c73083afaa4dcc8fd217ca3fbb00e12a1680b918fe024fc6f42601785aa71",
+      "diagnostic": true,
+      "base_commit": "1b79f24831f78722e6c5fd205bc06646dd920b32",
+      "base_kernel_tree": "bf03f2961ab165430d3a9174b9095398785dc8cd",
+      "diagnostic_files": {
+        "Documentation/sound/soc/index.rst": "e01ba144e8c2e4f0e5f7db05ee214490be959afcc615507e09b0bc6371d2ea24",
+        "Documentation/sound/soc/j71b-speaker-diagnostic.rst": "2bb44f4a68e52707bf85bd2309bfca21b8d30abc5a4c3587b4a8fba874319f51",
+        "arch/arm64/configs/orchard_apple16k_defconfig": "74ea45519b44e004f4a4fbab59d2d330086f7dde1774edc309bb1eea19ff801f",
+        "arch/arm64/configs/orchard_apple4k_defconfig": "92e2f8cc4a7fa0e5558906c5db8cebdd16944b7470fb3502d0df1b9f632aa724",
+        "sound/soc/codecs/Kconfig": "2d88b73ce59e2493c37db1b36fe9bce12818f38d101cbe2c275f4ca3e1d4ff1c",
+        "sound/soc/codecs/max98357a.c": "501d2af86c181a839ed80596e434e1553af5431135a9d57af3d61fc7255aaec9",
+        "tools/testing/selftests/alsa/test_max98357a_j71b.py": "e2291d4b6ed4cc25bd6e8e44bf881b3a54d7eea36ad9919a3efa233cbaccace8"
+      },
+      "diagnostic_restore": [
+        {
+          "path": "Documentation/sound/soc/index.rst",
+          "base_blob": "22878d73f7a54a522e91c38a0edb66a32a64a828",
+          "base_mode": "100644"
+        },
+        {
+          "path": "Documentation/sound/soc/j71b-speaker-diagnostic.rst",
+          "base_blob": null,
+          "base_mode": null
+        },
+        {
+          "path": "arch/arm64/configs/orchard_apple16k_defconfig",
+          "base_blob": "977136acfbc5622599e3b1509bda2e1c5a8846e0",
+          "base_mode": "100644"
+        },
+        {
+          "path": "arch/arm64/configs/orchard_apple4k_defconfig",
+          "base_blob": "11c7e2f67aa44392092d203283d30a6f8bfe29b7",
+          "base_mode": "100644"
+        },
+        {
+          "path": "sound/soc/codecs/Kconfig",
+          "base_blob": "5d21695a787e37c8e779fed69ca21a5230fddb4e",
+          "base_mode": "100644"
+        },
+        {
+          "path": "sound/soc/codecs/max98357a.c",
+          "base_blob": "18ae7121261c8f9c2a66fa0fc1d8109a29bbf634",
+          "base_mode": "100644"
+        },
+        {
+          "path": "tools/testing/selftests/alsa/test_max98357a_j71b.py",
+          "base_blob": null,
+          "base_mode": null
+        }
+      ]
     }
   }
 }
