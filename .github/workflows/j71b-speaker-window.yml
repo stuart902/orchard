@@ -1,16 +1,16 @@
-name: J71b current audio components (no release)
+name: J71b speaker window components (no release)
 on:
   push:
-    branches: [ci/j71b-audio-current-nov4]
+    branches: [ci/j71b-speaker-window-nov7]
   workflow_dispatch:
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: j71b-audio-current-${{ github.ref }}
+  group: j71b-speaker-window-${{ github.ref }}
   cancel-in-progress: false
 env:
-  LINUX_COMMIT: 6af872e1ca0ecfd8eb0c6b5f21bed1c964d45b48
+  LINUX_COMMIT: aaa2a29a93afe6fea3dbe70cb246642e525b210c
 jobs:
   tests:
     runs-on: ubuntu-24.04
@@ -28,6 +28,17 @@ jobs:
       - run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
       - run: python ci/test-audit-audio-current.py
       - run: python ci/test-stage-audio-current.py
+      - run: python ci/test-speaker-workflow.py
+      - uses: actions/checkout@v4
+        with:
+          repository: stuart902/linux
+          ref: ${{ env.LINUX_COMMIT }}
+          path: linux
+          persist-credentials: false
+      - name: Audit exact diagnostic source and run actual callback tests
+        run: |
+          python ci/audit-audio-current.py linux --variant speaker --expected-commit "$LINUX_COMMIT"
+          CC=cc python linux/tools/testing/selftests/alsa/test_max98357a_j71b.py
   config-4k:
     needs: tests
     runs-on: ubuntu-24.04-arm
@@ -54,28 +65,34 @@ jobs:
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$PWD/linux"
-          python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT"
+          python3 ci/audit-audio-current.py linux --variant speaker --expected-commit "$LINUX_COMMIT"
           python3 ci/test-mca-xrun.py
           mkdir -p out/4k
           make -C linux O="$PWD/out/4k" ARCH=arm64 LLVM=-19 orchard_apple4k_defconfig
-          python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT" \
+          python3 ci/audit-audio-current.py linux --variant speaker --expected-commit "$LINUX_COMMIT" \
             --config out/4k/.config --baseline-config kernel/configs/apple-4k/config --pages 4k --output out/4k-config-receipt.json
           make -C linux O="$PWD/out/4k" ARCH=arm64 LLVM=-19 -j"$(nproc)" \
             drivers/soc/apple/aop.o drivers/soc/apple/aop-audio.o drivers/soc/apple/apple-sio-core.o \
             drivers/dma/apple-sio-dma.o sound/soc/apple/t8010-pdm.o sound/soc/apple/s8000-mca.o sound/soc/codecs/max98357a.o
+          make -C linux O="$PWD/out/4k" ARCH=arm64 LLVM=-19 DTC_FLAGS=-@ apple/t8010-j71b.dtb
+          python3 -c 'import runpy; from pathlib import Path; runpy.run_path("ci/stage-audio-current.py")["audit_dtb"](Path("out/4k/arch/arm64/boot/dts/apple/t8010-j71b.dtb"))'
+          cp out/4k/arch/arm64/boot/dts/apple/t8010-j71b.dtb out/t8010-j71b-4k.dtb
+          (cd out/4k && sha256sum drivers/soc/apple/{aop,aop-audio,apple-sio-core}.o drivers/dma/apple-sio-dma.o sound/soc/apple/{t8010-pdm,s8000-mca}.o sound/soc/codecs/max98357a.o) > out/4k-object-SHA256SUMS
           cp out/4k/.config out/resolved-4k.config
           dpkg-query -W > out/toolchain-4k.lock
       - uses: actions/upload-artifact@v4
         with:
-          name: orchard-audio-current-4k-checks
+          name: orchard-speaker-window-4k-checks
           path: |
             out/4k-config-receipt.json
             out/resolved-4k.config
             out/toolchain-4k.lock
+            out/t8010-j71b-4k.dtb
+            out/4k-object-SHA256SUMS
           if-no-files-found: error
           retention-days: 14
   kernel:
-    needs: tests
+    needs: [tests, config-4k]
     permissions:
       contents: read
       actions: read
@@ -111,7 +128,7 @@ jobs:
           df -h "$PWD"
           python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 10 * 1024**3'
           echo "ORCHARD_CACHE_DIR=$PWD/out/cache" >> "$GITHUB_ENV"
-          python3 ci/audit-audio-current.py linux --variant microphone --expected-commit "$LINUX_COMMIT"
+          python3 ci/audit-audio-current.py linux --variant speaker --expected-commit "$LINUX_COMMIT"
       - name: Install native kernel toolchain and checkout launcher
         run: |
           bash kernel/install-toolchain
@@ -138,12 +155,17 @@ jobs:
           "$PWD/bin/orchard" build "$PWD/examples/hardware-check" --platform apple-16k \
             --kernel-tree "$PWD/linux" --loader "$PWD/out/components/quiet/m1n1.bin" \
             --pongo "$PWD/out/components/quiet/pongo.bin" --busybox "$PWD/out/components/boot/busybox" --explain
+      - uses: actions/download-artifact@v4
+        with:
+          name: orchard-speaker-window-4k-checks
+          path: out/4k-checks
       - name: Audit actual components and package corresponding sources
         run: |
           set -euo pipefail
           "$PWD/bin/orchard" python ci/stage-audio-current.py stage --expected-commit "$LINUX_COMMIT"
           dpkg-query -W > out/components/kernel-toolchain-packages.lock
           mkdir -p out/publication
+          cp out/4k-checks/* out/publication/
           python3 ci/package_components.py --platform apple-16k --directory out/components \
             --output out/publication/apple-16k-components.tar.gz
           git -C linux archive --format=tar.gz -o "$PWD/out/publication/kernel-source-apple-16k.tar.gz" HEAD
@@ -157,6 +179,7 @@ jobs:
           cp examples/hardware-check/out/apple-16k/commands.sh out/publication/build-commands.sh
           python3 ci/export-audio-loader-source.py
           cp ci/AUDIO-TEST-README.txt out/publication/README.txt
+          cp linux/Documentation/sound/soc/j71b-speaker-diagnostic.rst out/publication/diagnostic-source-notes.rst
           cp out/python-runtime.txt out/publication/
           (cd out/publication && sha256sum * > SHA256SUMS)
       - name: Attest public test components
@@ -172,7 +195,7 @@ jobs:
         run: cp "$BUNDLE_PATH" out/publication/orchard-build.sigstore.jsonl
       - uses: actions/upload-artifact@v4
         with:
-          name: orchard-audio-current-components
+          name: orchard-speaker-window-components
           path: out/publication/*
           compression-level: 0
           if-no-files-found: error

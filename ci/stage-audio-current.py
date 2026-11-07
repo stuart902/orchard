@@ -177,7 +177,7 @@ def reuse():
 
 def audit_modules(kernel):
     release = (kernel / 'kernel.release').read_text().strip()
-    if release != '7.3.0-rc1-j71b-audio-nov4-r1-orchard-apple-16k':
+    if release != '7.3.0-rc1-j71b-speaker-window-nov7-r1-orchard-apple-16k':
         raise ValueError('Unexpected test kernel release: ' + release)
     roots = list((kernel / 'lib/modules').iterdir())
     if len(roots) != 1 or roots[0].name != release:
@@ -224,15 +224,30 @@ def audit_modules(kernel):
         if elf[:6] != b'\x7fELF\x02\x01' or elf[18:20] != b'\xb7\x00':
             raise ValueError('Module is not little-endian ELF64 AArch64: ' + str(path))
         hashes[path.relative_to(modules).as_posix()] = digest(path)
+    codec = next(modules.rglob('snd-soc-max98357a.ko'))
+    audit_gate(codec)
     return release, hashes
+
+
+def audit_gate(codec):
+    parameters = subprocess.check_output(['modinfo', '-p', str(codec)], text=True)
+    if 'j71b_test_arm:Permit one 30 ms J71b amplifier test window (default: false) (bool)' not in parameters.splitlines():
+        raise ValueError('Compiled codec lacks the diagnostic parameter')
+    symbols = subprocess.check_output(['llvm-nm-19', '--format=posix', str(codec)], text=True)
+    arm = [line.split() for line in symbols.splitlines() if line.split() and line.split()[0] == 'j71b_test_arm']
+    if len(arm) != 1 or len(arm[0]) != 4 or arm[0][1] not in ('b', 'B') or int(arm[0][3], 16) != 1:
+        raise ValueError('Compiled arming boolean is not zero-initialized BSS')
+    return {'module_sha256': digest(codec), 'arming_default': False,
+            'arming_symbol_storage': 'BSS', 'parameter_permission_source': '0400',
+            'window_ms': 30, 'physical_cutoff_verified': False}
 
 
 def audit_dtb(dtb):
     def fdt(node, prop, kind=None):
-        return subprocess.check_output(['fdtget', *(['-t', kind] if kind else []), str(dtb), node, prop], text=True).strip()
+        return subprocess.check_output(['fdtget', *(['-d', 'okay'] if node == '/sound' and prop == 'status' else []), *(['-t', kind] if kind else []), str(dtb), node, prop], text=True).strip()
     for node, expected in [('/dmic', 'okay'), ('/microphones', 'okay'), ('/soc/pdm@20a0b4000', 'okay'),
-                           ('/soc/aop@210800000/aop-audio', 'okay'), ('/sound', 'disabled'),
-                           ('/soc/mca@20a0a8000', 'disabled')]:
+                           ('/soc/aop@210800000/aop-audio', 'okay'), ('/sound', 'okay'),
+                           ('/soc/mca@20a0a8000', 'okay')]:
         if fdt(node, 'status') != expected:
             raise ValueError('Wrong DT state: ' + node)
     if fdt('/sound', 'simple-audio-card,format') != 'dsp_a':
@@ -240,6 +255,11 @@ def audit_dtb(dtb):
     amp = fdt('/__symbols__', 'speaker_amps')
     if fdt(amp, 'maxim,tdm') != '':
         raise ValueError('Amplifier TDM property is not boolean')
+    if fdt(amp, 'compatible') != 'maxim,max98357a':
+        raise ValueError('Wrong amplifier codec')
+    controller = fdt('/__symbols__', 'pinctrl_ap')
+    if fdt(amp, 'sdmode-gpios', 'x').split() != [fdt(controller, 'phandle', 'x'), '14', '0']:
+        raise ValueError('SD_MODE is not pinctrl_ap GPIO20 active high')
     if fdt('/dmic', 'num-channels', 'u') != '2':
         raise ValueError('Expected two capture channels')
     if fdt('/soc/pdm@20a0b4000', 'dmas', 'x').split()[-1] != '5b':
@@ -255,7 +275,7 @@ def stage(expected_commit):
     config = ROOT / 'linux/.orchard-out/apple-16k/output/.config'
     shutil.copy2(config, target / 'resolved.config')
     subprocess.run([sys.executable, str(ROOT / 'ci/audit-audio-current.py'), str(ROOT / 'linux'),
-                    '--variant', 'microphone', '--expected-commit', expected_commit,
+                    '--variant', 'speaker', '--expected-commit', expected_commit,
                     '--config', str(config), '--baseline-config', str(ROOT / 'kernel/configs/apple-16k/config'),
                     '--pages', '16k', '--output', str(target / 'integration-receipt.json')], check=True)
     release, modules = audit_modules(target / 'kernel')
@@ -266,7 +286,10 @@ def stage(expected_commit):
                   platform='apple-16k', kernel_release=release, hardware_tested=False,
                   build_run=int(os.environ['GITHUB_RUN_ID']), modules=modules,
                   dtb_sha256=digest(dtb), image_sha256=digest(target / 'kernel/Image.gz'),
-                  playback_disabled=True, upstream_tdm_preserved=True)
+                  speaker_topology_enabled=True, amplifier_default_unarmed=True,
+                  upstream_tdm_preserved=True,
+                  diagnostic_gate=audit_gate(next((target / 'kernel/lib/modules').rglob('snd-soc-max98357a.ko'))),
+                  package_kind='components-only-no-installer', arming_configuration_included=False)
     json_file(target / 'integration-receipt.json', record)
     shutil.copy2(ROOT / 'examples/hardware-check/out/apple-16k/build.json', target / 'ram-assembly-receipt.json')
 

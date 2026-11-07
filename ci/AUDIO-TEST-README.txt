@@ -1,20 +1,34 @@
-J71b current-upstream microphone test components
+J71b one-shot speaker diagnostic components
 
-Build-only candidate for iPad7,5 / J71b / A1893 / T8010. This is not an installer,
-production release or hardware-qualified image. The separate desktop assembly
-must verify the same kernel, modules and DTB before any authorized device test.
+Build-only candidate for iPad7,5 / J71b / T8010. This is not an installer,
+production release, authorization to boot or play audio, or hardware-qualified
+speaker support. Keep the installed microphone image unchanged.
 
-The underlying current Orchard TDM speaker source is preserved. This temporary
-variant disables /sound and MCA2 before desktop startup. That is a software
-playback gate, not proven physical amplifier isolation. Microphones remain
-experimental: an ownership/firmware/DMA fault can block teardown indefinitely.
-After a fault, do not repeat capture, unload/unbind, or software reboot/shutdown.
-A process timeout cannot make teardown safe; physical reset may be necessary.
+Linux aaa2a29a93afe6fea3dbe70cb246642e525b210c extends the unchanged #20 audio
+baseline 1b79f24831f78722e6c5fd205bc06646dd920b32, based on Orchard 79df400.
+No later power or suspend changes are included. Expected full kernel release:
+7.3.0-rc1-j71b-speaker-window-nov7-r1-orchard-apple-16k.
 
-Read integration-receipt.json and reuse-receipt.json for exact source and input
-identity. Verify SHA256SUMS before use. The 4K artifact is focused object/config
-coverage, not a full 4K kernel. Native compilation and mock tests are distinct
-from boot, routing, cleanup, suspend/resume or playback acceptance.
+Normal TDM speaker topology is enabled, but the diagnostic codec defaults to
+unarmed and muted on J71b. This package includes no arming configuration or
+playback command. Explicit load-time arming, device access, each boot and any
+playback require separate approval. Do not automatically reload, rebind, retry,
+record or use desktop audio. Do not mix this kernel, DTB or modules with the
+installed speaker-disabled microphone image.
 
-No private Apple firmware, calibration, recording or device identifier is
-included. No device operation or release publication is performed by this CI.
+The one module-lifetime START allowance requests GPIO-low at a 30 ms monotonic
+software deadline. It does not stop MCA/DMA and is not a physical cutoff,
+calibrated protection, hard real-time guarantee or proof of acoustic safety.
+Read diagnostic-source-notes.rst for admission, teardown and fault limits.
+Microphone source remains unchanged and experimental; uncertain DMA ownership
+may block teardown. A userspace timeout does not make reset/shutdown safe.
+
+Verify SHA256SUMS and read integration-receipt.json and reuse-receipt.json.
+The full 16K build includes its modules and DTBs. The accompanying 4K checks
+cover resolved configuration, selected objects and J71b DTB, not a full kernel.
+Source/callback tests and native compilation do not establish boot, mapping,
+volume, physical mute, timer latency, touch coexistence or cleanup acceptance.
+
+Sources and exact reused loader/tool provenance are included. No private Apple
+firmware, calibration, recording or device identifier is packaged. This build
+performs no device operation, root rebuild, reinstall or release publication.
