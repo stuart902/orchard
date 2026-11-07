@@ -135,7 +135,7 @@ class DtbTests(unittest.TestCase):
         self.values = {(node, 'status'): value for node, value in [('/dmic', 'okay'), ('/microphones', 'okay'),
                        ('/soc/pdm@20a0b4000', 'okay'), ('/soc/aop@210800000/aop-audio', 'okay'),
                        ('/sound', 'okay'), ('/soc/mca@20a0a8000', 'okay')]}
-        self.values.update({('/sound', 'simple-audio-card,format'): 'dsp_a',
+        self.values.update({('/', 'compatible'): 'apple,j71b apple,t8010', ('/sound', 'simple-audio-card,format'): 'dsp_a',
                             ('/__symbols__', 'speaker_amps'): '/amplifier', ('/amplifier', 'maxim,tdm'): '',
                             ('/amplifier', 'compatible'): 'maxim,max98357a',
                             ('/__symbols__', 'pinctrl_ap'): '/soc/pinctrl',

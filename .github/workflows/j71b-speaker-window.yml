@@ -8,7 +8,8 @@ permissions:
   actions: read
 concurrency:
   group: j71b-speaker-window-${{ github.ref }}
-  cancel-in-progress: false
+  # Only this diagnostic branch: superseded source checks must not build twice.
+  cancel-in-progress: true
 env:
   LINUX_COMMIT: aaa2a29a93afe6fea3dbe70cb246642e525b210c
 jobs:

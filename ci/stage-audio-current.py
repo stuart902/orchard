@@ -245,6 +245,8 @@ def audit_gate(codec):
 def audit_dtb(dtb):
     def fdt(node, prop, kind=None):
         return subprocess.check_output(['fdtget', *(['-d', 'okay'] if node == '/sound' and prop == 'status' else []), *(['-t', kind] if kind else []), str(dtb), node, prop], text=True).strip()
+    if 'apple,j71b' not in fdt('/', 'compatible').split():
+        raise ValueError('DT root would not activate the J71b diagnostic gate')
     for node, expected in [('/dmic', 'okay'), ('/microphones', 'okay'), ('/soc/pdm@20a0b4000', 'okay'),
                            ('/soc/aop@210800000/aop-audio', 'okay'), ('/sound', 'okay'),
                            ('/soc/mca@20a0a8000', 'okay')]:
